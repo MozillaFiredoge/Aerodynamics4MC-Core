@@ -6,6 +6,6 @@ import net.minecraft.world.level.block.state.BlockState;
 
 public class FanBlockEntity extends BlockEntity {
     public FanBlockEntity(BlockPos pos, BlockState state) {
-        super(ModBlocks.FAN_BLOCK_ENTITY, pos, state);
+        super(ModBlocks.FAN_BLOCK_ENTITY/*? neoforge{ */.get()/*?} */, pos, state);
     }
 }

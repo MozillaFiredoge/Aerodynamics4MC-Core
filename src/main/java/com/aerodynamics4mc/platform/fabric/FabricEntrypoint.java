@@ -2,7 +2,8 @@ package com.aerodynamics4mc.platform.fabric;
 
 //? fabric {
 
-import com.aerodynamics4mc.ModTemplate;
+/*import com.aerodynamics4mc.ModTemplate;
+import com.aerodynamics4mc.block.ModBlocks;
 import com.aerodynamics4mc.network.FabricCustomPayload;
 import com.aerodynamics4mc.network.packet.AeroClientL2PreferencePacket;
 import com.aerodynamics4mc.runtime.AeroCommands;
@@ -26,7 +27,10 @@ public class FabricEntrypoint implements ModInitializer {
 	@Override
 	public void onInitialize() {
 		ModTemplate.onInitialize();
-		CommandRegistrationCallback.EVENT.register(AeroCommands::register);
+		ModBlocks.register();
+		FabricCustomPayload.register();
+
+		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> AeroCommands.register(dispatcher));
 		ServerTickEvents.END_SERVER_TICK.register(runtime::onServerTick);
 		ServerChunkEvents.CHUNK_LOAD.register(runtime::onChunkLoad);
 		ServerChunkEvents.CHUNK_UNLOAD.register(runtime::onChunkUnload);
@@ -55,4 +59,4 @@ public class FabricEntrypoint implements ModInitializer {
 		ServerLifecycleEvents.SERVER_STOPPED.register(runtime::shutdownAll);
 	}
 }
-//?}
+*///?}

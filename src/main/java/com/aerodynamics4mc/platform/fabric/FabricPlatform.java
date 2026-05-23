@@ -2,7 +2,7 @@ package com.aerodynamics4mc.platform.fabric;
 
 //? fabric {
 
-import com.aerodynamics4mc.network.FabricCustomPayload;
+/*import com.aerodynamics4mc.network.FabricCustomPayload;
 import com.aerodynamics4mc.platform.Platform;
 import com.github.razorplay.packet_handler.network.IPacket;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
@@ -42,4 +42,4 @@ public class FabricPlatform implements Platform {
 		ServerPlayNetworking.send(player, new FabricCustomPayload(packet));
 	}
 }
-//?}
+*///?}

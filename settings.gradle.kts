@@ -23,7 +23,7 @@ stonecutter {
 			loaders.forEach { version("$version-$it", version).buildscript = getBuildscript(it, version) }
 
 		//match("1.21.7", "fabric", "neoforge")
-		match("1.21.11", "fabric")
+		match("1.21.11", "fabric", "neoforge")
 
 		vcsVersion = "1.21.11-fabric"
 	}

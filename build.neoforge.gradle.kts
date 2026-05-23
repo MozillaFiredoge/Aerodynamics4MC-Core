@@ -29,6 +29,25 @@ platform {
 	}
 }
 
+mixins {
+	common {
+		always(
+			"ServerWorldBlockStateMixin",
+			"event.LevelChunkMixin"
+		)
+	}
+	client {
+		always(
+			"client.AscendingParticleMixin",
+			"client.CampfireSmokeParticleMixin",
+			"client.ClientWorldBlockStateMixin",
+			"client.LeavesParticleMixin",
+			"client.ParticleAccessor",
+			"client.ParticleMixin"
+		)
+	}
+}
+
 neoForge {
 	version = prop("deps.neoforge")
 	accessTransformers.from(rootProject.file("src/main/resources/aw/${stonecutter.current.version}.cfg"))
@@ -65,11 +84,20 @@ neoForge {
 repositories {
 	mavenCentral()
 	strictMaven("https://api.modrinth.com/maven", "maven.modrinth") { name = "Modrinth" }
+	strictMaven("https://jitpack.io") { name = "Jitpack" }
 }
 
 dependencies {
 	// implementation(libs.moulberry.mixinconstraints)
 	// jarJar(libs.moulberry.mixinconstraints)
+
+	compileOnly("org.projectlombok:lombok:1.18.46")
+	annotationProcessor("org.projectlombok:lombok:1.18.46")
+
+	testCompileOnly("org.projectlombok:lombok:1.18.46")
+	testAnnotationProcessor("org.projectlombok:lombok:1.18.46")
+
+	jarJar(implementation("com.github.RazorPlay01:PacketHandler:1.3.0")!!)
 }
 
 tasks.named("createMinecraftArtifacts") {

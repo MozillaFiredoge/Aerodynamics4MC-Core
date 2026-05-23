@@ -2,7 +2,7 @@ package com.aerodynamics4mc.platform.fabric;
 
 //? fabric {
 
-import com.aerodynamics4mc.ModTemplate;
+/*import com.aerodynamics4mc.ModTemplate;
 import com.aerodynamics4mc.client.AeroClientCommands;
 import com.aerodynamics4mc.client.AeroClientMod;
 import com.aerodynamics4mc.network.FabricCustomPayload;
@@ -34,7 +34,7 @@ public class FabricClientEntrypoint implements ClientModInitializer {
 						case AeroFlowAnalysisPacket pkt -> AeroClientMod.onFlowAnalysis(pkt, context);
 						case AeroCoarseWindPacket pkt -> AeroClientMod.onCoarseWindField(pkt, context);
 						case AeroFlowPacket pkt -> AeroClientMod.onFlowField(pkt, context);
-						default -> ModTemplate.LOGGER.info("Unknown client packet: {}", packet.getPacketId());
+						default -> ModTemplate.LOGGER.info("Unknown server packet: {}", packet.getPacketId());
 					}
 				}));
 		ModTemplate.onInitializeClient();
@@ -63,4 +63,4 @@ public class FabricClientEntrypoint implements ClientModInitializer {
 		});
 	}
 }
-//?}
+*///?}

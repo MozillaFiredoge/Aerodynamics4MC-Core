@@ -26,7 +26,7 @@ public class WindTurbineProbeBlockEntity extends BlockEntity {
     private long lastSampleTick = -1L;
 
     public WindTurbineProbeBlockEntity(BlockPos pos, BlockState state) {
-        super(ModBlocks.WIND_TURBINE_PROBE_BLOCK_ENTITY, pos, state);
+        super(ModBlocks.WIND_TURBINE_PROBE_BLOCK_ENTITY/*? neoforge{ */.get()/*?} */, pos, state);
     }
 
     public static void tick(Level world, BlockPos pos, BlockState state, WindTurbineProbeBlockEntity blockEntity) {

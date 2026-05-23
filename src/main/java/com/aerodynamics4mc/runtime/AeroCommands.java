@@ -33,9 +33,7 @@ public class AeroCommands {
 
 	private static final AeroServerRuntime runtime = AeroServerRuntime.getInstance();
 
-	public static void register(final CommandDispatcher<CommandSourceStack> dispatcher,
-	                            final CommandBuildContext registryAccess,
-	                            final Commands.CommandSelection environment) {
+	public static void register(final CommandDispatcher<CommandSourceStack> dispatcher) {
 		dispatcher.register(Commands.literal("aero")
 				.requires(Commands.hasPermission(Commands.LEVEL_ADMINS))
 				.then(Commands.literal("status").executes(ctx -> executeStatus(ctx.getSource())))

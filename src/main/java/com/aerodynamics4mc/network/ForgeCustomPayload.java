@@ -1,6 +1,6 @@
 package com.aerodynamics4mc.network;
 //? neoforge {
-/*
+
 import com.aerodynamics4mc.ModTemplate;
 import com.github.razorplay.packet_handler.network.IPacket;
 import com.github.razorplay.packet_handler.network.PacketTCP;
@@ -10,9 +10,6 @@ import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
-import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
-import net.neoforged.neoforge.network.handling.IPayloadContext;
-import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 
 public record ForgeCustomPayload(IPacket packet) implements CustomPacketPayload {
 	public static final Type<ForgeCustomPayload> TYPE =
@@ -46,34 +43,5 @@ public record ForgeCustomPayload(IPacket packet) implements CustomPacketPayload 
 	public Type<? extends CustomPacketPayload> type() {
 		return TYPE;
 	}
-
-	public static void register(RegisterPayloadHandlersEvent event) {
-		ModTemplate.LOGGER.info("Registering Packets for " + ModTemplate.MOD_ID);
-
-		PayloadRegistrar registrar = event.registrar("1.0");
-
-		registrar.playBidirectional(
-				ForgeCustomPayload.TYPE,
-				ForgeCustomPayload.STREAM_CODEC,
-				new DirectionalPayloadHandler<>(
-						this::handleClientbound,
-						this::handleServerbound
-				)
-		);
-	}
-
-	private static void handleClientbound(ForgeCustomPayload payload,
-	                                      IPayloadContext context) {
-		IPacket packet = payload.packet();
-
-		context.enqueueWork(() -> {
-
-		});
-	}
-
-	private static void handleServerbound(ForgeCustomPayload payload,
-	                                      IPayloadContext context) {
-		IPacket packet = payload.packet();
-	}
-}*/
+}
 //?}

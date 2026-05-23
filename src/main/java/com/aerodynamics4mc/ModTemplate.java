@@ -2,7 +2,6 @@ package com.aerodynamics4mc;
 
 import com.aerodynamics4mc.block.ModBlocks;
 import com.aerodynamics4mc.client.AeroClientMod;
-import com.aerodynamics4mc.network.FabricCustomPayload;
 import com.aerodynamics4mc.network.packet.AeroClientL2PreferencePacket;
 import com.aerodynamics4mc.network.packet.AeroCoarseWindPacket;
 import com.aerodynamics4mc.network.packet.AeroFlowAnalysisPacket;
@@ -17,10 +16,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 //? fabric {
-import com.aerodynamics4mc.platform.fabric.FabricPlatform;
-//?} neoforge {
-/*import com.aerodynamics4mc.platform.neoforge.NeoforgePlatform;
- *///?} forge {
+/*import com.aerodynamics4mc.platform.fabric.FabricPlatform;
+*///?} neoforge {
+import com.aerodynamics4mc.platform.neoforge.NeoforgePlatform;
+ //?} forge {
 /*import com.aerodynamics4mc.platform.forge.ForgePlatform;
  *///?}
 
@@ -38,13 +37,6 @@ public class ModTemplate {
 		LOGGER.info("Initializing {} on {}", MOD_ID, ModTemplate.xplat().loader());
 		LOGGER.debug("{}: { version: {}; friendly_name: {} }", MOD_ID, MOD_VERSION, MOD_FRIENDLY_NAME);
 		registerPackets();
-		//? fabric {
-		FabricCustomPayload.register();
-		//?}
-		//? neoforge {
-		//com.aerodynamics4mc.net.update.ForgeCustomPayload.register();
-		//?}
-		ModBlocks.register();
 	}
 
 	public static void onInitializeClient() {
@@ -59,10 +51,10 @@ public class ModTemplate {
 
 	private static Platform createPlatformInstance() {
 		//? fabric {
-		return new FabricPlatform();
-		//?} neoforge {
-		/*return new NeoforgePlatform();
-		 *///?} forge {
+		/*return new FabricPlatform();
+		*///?} neoforge {
+		return new NeoforgePlatform();
+		 //?} forge {
 		/*return new ForgePlatform();
 		 *///?}
 	}

@@ -27,9 +27,9 @@ import java.util.HashMap;
 import java.util.Map;
 
 //? fabric{
-import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderContext;
-//?} neoforge{
-//import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+/*import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderContext;
+*///?} neoforge{
+import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 //?}
 
 public final class AeroVisualizer {
@@ -282,7 +282,7 @@ public final class AeroVisualizer {
         });
     }
 
-    public void renderAtlasOverlay(/*? fabric{ */ WorldRenderContext /*?} neoforge{ */ /*RenderLevelStageEvent.AfterTranslucentBlocks*/ /*?} */ context) {
+    public void renderAtlasOverlay(/*? fabric{ */ /*WorldRenderContext *//*?} neoforge{ */ RenderLevelStageEvent.AfterTranslucentBlocks /*?} */ context) {
         if (!streamingEnabled || (remoteWindows.isEmpty() && localWindows.isEmpty())) {
             return;
         }
@@ -296,7 +296,7 @@ public final class AeroVisualizer {
 		MultiBufferSource.BufferSource bufferSource = client.renderBuffers().bufferSource();
 		VertexConsumer lineBuffer = bufferSource.getBuffer(RenderTypes.lines());
 
-        PoseStack matrices =  /*? fabric{ */ context.matrices(); /*?} neoforge{ */ /*context.getPoseStack();*/ /*?} */
+        PoseStack matrices =  /*? fabric{ */ /*context.matrices(); *//*?} neoforge{ */ context.getPoseStack(); /*?} */
 
 		try (var ignored = client.collectPerTickGizmos()) {
             for (RemoteFlowField field : localWindows.values()) {

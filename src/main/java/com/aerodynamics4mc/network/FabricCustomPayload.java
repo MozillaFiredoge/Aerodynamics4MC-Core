@@ -1,7 +1,7 @@
 package com.aerodynamics4mc.network;
 //? fabric {
 
-import com.aerodynamics4mc.ModTemplate;
+/*import com.aerodynamics4mc.ModTemplate;
 import com.github.razorplay.packet_handler.network.IPacket;
 import com.github.razorplay.packet_handler.network.PacketTCP;
 import com.google.common.io.ByteArrayDataInput;
@@ -55,4 +55,4 @@ public record FabricCustomPayload(IPacket packet) implements CustomPacketPayload
 		PayloadTypeRegistry.playS2C().register(FabricCustomPayload.CUSTOM_PAYLOAD_ID, FabricCustomPayload.CODEC);
 	}
 }
-//?}
+*///?}

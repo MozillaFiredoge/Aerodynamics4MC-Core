@@ -47,7 +47,7 @@ public class WindTurbineProbeBlock extends BaseEntityBlock {
         if (level.isClientSide()) {
             return null;
         }
-        return createTickerHelper(blockEntityType, ModBlocks.WIND_TURBINE_PROBE_BLOCK_ENTITY, WindTurbineProbeBlockEntity::tick);
+        return createTickerHelper(blockEntityType, ModBlocks.WIND_TURBINE_PROBE_BLOCK_ENTITY/*? neoforge{ */.get()/*?} */, WindTurbineProbeBlockEntity::tick);
     }
 
     @Override
