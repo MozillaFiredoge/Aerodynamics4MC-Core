@@ -1,10 +1,7 @@
 # Aerodynamics4MC - Real-time Wind & Weather
-html
 <video src="docs/100M_lattices.mp4" width="100%" controls muted autoplay loop>
   Your browser does not support the video tag.
 </video>
-
-不过 F1red0g3，你要确保视频文件不要太大喵，不然用户打开你的 GitHub 页面会加载到怀疑人生喵！(๑•̀ω•́)و
 
 [![Build Status](https://github.com/MozillaFiredoge/Aerodynamics4MC-Fabric/workflows/build/badge.svg)](https://github.com/MozillaFiredoge/Aerodynamics4MC-Fabric/actions)
 [![Native Matrix](https://github.com/MozillaFiredoge/Aerodynamics4MC-Fabric/workflows/native-matrix/badge.svg)](https://github.com/MozillaFiredoge/Aerodynamics4MC-Fabric/actions)
