@@ -1,7 +1,9 @@
 # Aerodynamics4MC - Real-time Wind & Weather
-<video src="docs/100M_lattices.mp4" width="100%" controls muted autoplay loop>
-  Your browser does not support the video tag.
-</video>
+
+
+https://github.com/user-attachments/assets/e19d818e-6423-4692-b595-7c904b25296c
+
+
 
 [![Build Status](https://github.com/MozillaFiredoge/Aerodynamics4MC-Fabric/workflows/build/badge.svg)](https://github.com/MozillaFiredoge/Aerodynamics4MC-Fabric/actions)
 [![Native Matrix](https://github.com/MozillaFiredoge/Aerodynamics4MC-Fabric/workflows/native-matrix/badge.svg)](https://github.com/MozillaFiredoge/Aerodynamics4MC-Fabric/actions)
@@ -11,6 +13,7 @@
 ---
 
 ## 🌬 Introduction
+
 
 Aerodynamics4MC simulates everything from planetary‑scale pressure systems to block‑level gusts. Cyclones, tornadoes, and convective storms emerge naturally; terrain shape and roughness modulate airflow. Whether you’re building airships, blowing smoke particles, or harvesting wind energy, this mod delivers consistent, high‑performance wind data.
 ![Logo](docs/dsotm_v19_default_288.png)
