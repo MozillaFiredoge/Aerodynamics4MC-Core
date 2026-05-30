@@ -1,5 +1,6 @@
 package com.aerodynamics4mc.mixin.client;
 
+//? >=1.21.11 {
 import com.aerodynamics4mc.client.ParticleWindController;
 
 import net.minecraft.client.particle.FallingLeavesParticle;
@@ -26,3 +27,4 @@ abstract class LeavesParticleMixin {
         accessor.a4mc$setVelocityZ(next.z);
     }
 }
+//?}

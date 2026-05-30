@@ -518,6 +518,45 @@ AERO_LBM_CAPI_EXPORT int aero_solver_advance_wind_tunnel(
         : AERO_SOLVER_STATUS_ERROR;
 }
 
+AERO_LBM_CAPI_EXPORT int aero_solver_extract_flow_atlas(
+    long long handle,
+    int stride,
+    float* out_flow_atlas,
+    int out_value_count
+) {
+    std::lock_guard<std::mutex> lock(g_solver_mutex);
+    clear_error();
+    SolverContext* ctx = lookup_context(handle);
+    if (!ctx) {
+        return AERO_SOLVER_STATUS_ERROR;
+    }
+    if (stride <= 0) {
+        set_error("stride must be positive");
+        return AERO_SOLVER_STATUS_ERROR;
+    }
+    const int sx = (ctx->grid.nx + stride - 1) / stride;
+    const int sy = (ctx->grid.ny + stride - 1) / stride;
+    const int sz = (ctx->grid.nz + stride - 1) / stride;
+    const int64_t values = static_cast<int64_t>(sx) * sy * sz * kOutputChannels;
+    if (!out_flow_atlas || values <= 0 || values > std::numeric_limits<int>::max()
+        || out_value_count != static_cast<int>(values)) {
+        set_error("invalid flow atlas buffer");
+        return AERO_SOLVER_STATUS_ERROR;
+    }
+    if (!aero_lbm_extract_flow_atlas_rect(
+            ctx->grid.nx,
+            ctx->grid.ny,
+            ctx->grid.nz,
+            ctx->context_key,
+            stride,
+            out_flow_atlas,
+            out_value_count)) {
+        set_error(std::string("aero_lbm_extract_flow_atlas_rect failed: ") + aero_lbm_last_error());
+        return AERO_SOLVER_STATUS_ERROR;
+    }
+    return AERO_SOLVER_STATUS_OK;
+}
+
 AERO_LBM_CAPI_EXPORT int aero_solver_run_wind_tunnel(
     const AeroStepInput* input,
     AeroStepOutput* output

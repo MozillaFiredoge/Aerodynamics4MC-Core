@@ -552,6 +552,7 @@ struct ContextState {
 
     bool gpu_buffers_ready = false;
     bool gpu_initialized = false;
+    std::size_t classic_output_bytes = 0;
 
     bool compact_buffers_ready = false;
     bool compact_initialized = false;
@@ -1651,6 +1652,7 @@ void ensure_context_thermal_ddf_storage(ContextState& ctx) {
 }
 
 void ensure_context_temperature_storage(ContextState& ctx);
+void ensure_opencl_init_host_storage(ContextState& ctx);
 
 void rebuild_thermal_distributions_from_temperature(ContextState& ctx) {
     if (!thermal_ddf_benchmark_active()) return;
@@ -2732,6 +2734,10 @@ __constant float BOUSSINESQ_FORCE_MAX = 0.02f;
 
 inline float clampf(float v, float lo, float hi) { return fmin(hi, fmax(lo, v)); }
 inline int clampi(int v, int lo, int hi) { return min(hi, max(lo, v)); }
+// D3Q27 direction-major buffers exceed 2^31 elements on large grids.
+inline size_t dist_index_64(int q, int cells, int cell) {
+    return (size_t)q * (size_t)cells + (size_t)cell;
+}
 inline float clamp_shear_nu(float nu) { return clampf(nu, NU_SHEAR_MIN, NU_SHEAR_MAX); }
 inline float clamp_normal_nu(float nu) { return clampf(nu, NU_NORMAL_MIN, NU_NORMAL_MAX); }
 inline float tau_from_shear_nu(float nu) { return 0.5f + 3.0f * clamp_shear_nu(nu); }
@@ -2850,14 +2856,14 @@ inline float boundary_convective_value(
         return obstacle_bounce_value(f_read, payload, in_ch, nx, ny, nz, cells, cell, x, y, z, q, OPP[q], benchmark_flags);
     }
 
-    float f1 = f_read[q * cells + src1];
+    float f1 = f_read[dist_index_64(q, cells, src1)];
     int i2x = clampi(x + 2 * dx, 0, nx - 1);
     int i2y = clampi(y + 2 * dy, 0, ny - 1);
     int i2z = clampi(z + 2 * dz, 0, nz - 1);
     int src2 = (i2x * ny + i2y) * nz + i2z;
     if (payload[src2 * in_ch + 0] > 0.5f) return f1;
 
-    float f2 = f_read[q * cells + src2];
+    float f2 = f_read[dist_index_64(q, cells, src2)];
     return f1 + BOUNDARY_CONVECTIVE_BETA * (f1 - f2);
 }
 
@@ -2947,7 +2953,7 @@ inline float benchmark_boundary_value(
             if (payload[src * in_ch + 0] > 0.5f) {
                 return obstacle_bounce_value(f_read, payload, in_ch, nx, ny, nz, cells, cell, x, y, z, q, OPP[q], benchmark_flags);
             }
-            return f_read[q * cells + src];
+            return f_read[dist_index_64(q, cells, src)];
         }
         case 6:
             return boundary_convective_value(f_read, payload, in_ch, nx, ny, nz, cells, cell, x, y, z, q, sx, sy, sz, benchmark_flags);
@@ -3214,7 +3220,7 @@ inline float thermal_boundary_distribution_opencl(
     int cell,
     int q
 ) {
-    return thermal_f_read[TOPP[q] * cells + cell];
+    return thermal_f_read[dist_index_64(TOPP[q], cells, cell)];
 }
 
 inline float thermal_streamed_value_opencl(
@@ -3261,11 +3267,11 @@ inline float thermal_streamed_value_opencl(
             tx_min_data, tx_max_data, ty_min_data, ty_max_data, tz_min_data, tz_max_data
         );
         if (face_kind == 4) {
-            return -thermal_f_read[TOPP[q] * cells + cell] + 2.0f * TW[q] * clampf(face_data.x, THERMAL_MIN, THERMAL_MAX);
+            return -thermal_f_read[dist_index_64(TOPP[q], cells, cell)] + 2.0f * TW[q] * clampf(face_data.x, THERMAL_MIN, THERMAL_MAX);
         }
         if (face_kind == 5) {
             float wall_t = clampf(self_temperature + face_data.y, THERMAL_MIN, THERMAL_MAX);
-            return -thermal_f_read[TOPP[q] * cells + cell] + 2.0f * TW[q] * wall_t;
+            return -thermal_f_read[dist_index_64(TOPP[q], cells, cell)] + 2.0f * TW[q] * wall_t;
         }
         return thermal_boundary_distribution_opencl(thermal_f_read, cells, cell, q);
     }
@@ -3273,14 +3279,14 @@ inline float thermal_streamed_value_opencl(
     if (payload[src * in_ch + 0] > 0.5f) {
         return thermal_boundary_distribution_opencl(thermal_f_read, cells, cell, q);
     }
-    return thermal_f_read[q * cells + src];
+    return thermal_f_read[dist_index_64(q, cells, src)];
 }
 
 inline float obstacle_bounce_value(
     __global const float* f_read, __global const float* payload,
     int in_ch, int nx, int ny, int nz, int cells, int cell, int x, int y, int z, int q, int opp, int benchmark_flags
 ) {
-    float bounced = f_read[opp * cells + cell];
+    float bounced = f_read[dist_index_64(opp, cells, cell)];
     float blend = (benchmark_flags & BENCH_DISABLE_OBSTACLE_BOUNCE_BLEND) ? 0.0f : OBSTACLE_BOUNCE_BLEND;
     if (blend <= 0.0f) return bounced;
 
@@ -3292,7 +3298,7 @@ inline float obstacle_bounce_value(
     int src2 = (s2x * ny + s2y) * nz + s2z;
     if (payload[src2 * in_ch + 0] > 0.5f) return bounced;
 
-    float upstream = f_read[q * cells + src2];
+    float upstream = f_read[dist_index_64(q, cells, src2)];
     return bounced + blend * (upstream - bounced);
 }
 
@@ -3312,8 +3318,8 @@ kernel void init_distributions(
 
     for (int q = 0; q < KQ; ++q) {
         float eq = feq(q, rho, ux, uy, uz);
-        f[q * cells + cell] = eq;
-        f_post[q * cells + cell] = eq;
+        f[dist_index_64(q, cells, cell)] = eq;
+        f_post[dist_index_64(q, cells, cell)] = eq;
     }
 }
 
@@ -3611,7 +3617,7 @@ kernel void stream_collide_hydro_forced_step(
     for (int q = 0; q < KQ; ++q) {
         int opp = OPP[q];
         if (is_solid) {
-            f_local[q] = f_read[opp * cells + cell];
+            f_local[q] = f_read[dist_index_64(opp, cells, cell)];
             continue;
         }
         int sx = x - CX[q];
@@ -3631,13 +3637,13 @@ kernel void stream_collide_hydro_forced_step(
             if (payload[src * in_ch + 0] > 0.5f) {
                 f_local[q] = obstacle_bounce_value(f_read, payload, in_ch, nx, ny, nz, cells, cell, x, y, z, q, opp, benchmark_flags);
             } else {
-                f_local[q] = f_read[q * cells + src];
+                f_local[q] = f_read[dist_index_64(q, cells, src)];
             }
         }
     }
 
     if (is_solid) {
-        for (int q = 0; q < KQ; ++q) f_write[q * cells + cell] = f_local[q];
+        for (int q = 0; q < KQ; ++q) f_write[dist_index_64(q, cells, cell)] = f_local[q];
         return;
     }
 
@@ -3894,7 +3900,7 @@ R"CLC(
             float f_far = feq(q, 1.0f, 0.0f, 0.0f, 0.0f);
             f_next = keep_sponge * f_next + alpha_sponge * f_far;
         }
-        f_write[q * cells + cell] = f_next;
+        f_write[dist_index_64(q, cells, cell)] = f_next;
     }
 }
 
@@ -3931,7 +3937,7 @@ kernel void stream_collide_tgv_step(
         if (sz < 0) sz += nz;
         else if (sz >= nz) sz -= nz;
         int src = (sx * ny + sy) * nz + sz;
-        f_local[q] = f_read[q * cells + src];
+        f_local[q] = f_read[dist_index_64(q, cells, src)];
     }
 
     float rho = 0.0f;
@@ -4097,7 +4103,7 @@ kernel void stream_collide_tgv_step(
     float uy_corr = my_corr * inv_rho_corr;
     float uz_corr = mz_corr * inv_rho_corr;
     for (int q = 0; q < KQ; ++q) {
-        f_write[q * cells + cell] =
+        f_write[dist_index_64(q, cells, cell)] =
             f_post_local[q] + feq(q, rho, ux, uy, uz) - feq(q, fmax(1.0e-6f, rho_corr), ux_corr, uy_corr, uz_corr);
     }
 }
@@ -4148,7 +4154,7 @@ kernel void stream_collide_hydro_benchmark_step(
     for (int q = 0; q < KQ; ++q) {
         int opp = OPP[q];
         if (is_solid) {
-            f_local[q] = f_read[opp * cells + cell];
+            f_local[q] = f_read[dist_index_64(opp, cells, cell)];
             continue;
         }
 
@@ -4169,13 +4175,13 @@ kernel void stream_collide_hydro_benchmark_step(
             if (payload[src * in_ch + 0] > 0.5f) {
                 f_local[q] = obstacle_bounce_value(f_read, payload, in_ch, nx, ny, nz, cells, cell, x, y, z, q, opp, benchmark_flags);
             } else {
-                f_local[q] = f_read[q * cells + src];
+                f_local[q] = f_read[dist_index_64(q, cells, src)];
             }
         }
     }
 
     if (is_solid) {
-        for (int q = 0; q < KQ; ++q) f_write[q * cells + cell] = f_local[q];
+        for (int q = 0; q < KQ; ++q) f_write[dist_index_64(q, cells, cell)] = f_local[q];
         return;
     }
 
@@ -4374,7 +4380,7 @@ kernel void stream_collide_hydro_benchmark_step(
             float f_far = feq(q, 1.0f, 0.0f, 0.0f, 0.0f);
             f_next = keep_sponge * f_next + alpha_sponge * f_far;
         }
-        f_write[q * cells + cell] = f_next;
+        f_write[dist_index_64(q, cells, cell)] = f_next;
     }
 }
 
@@ -4444,11 +4450,11 @@ inline ushort4 compact_pack4(float4 value) {
 }
 
 inline float d3q27_f16_load(__global const ushort* f, int q, int cells, int cell) {
-    return half_bits_to_float(f[q * cells + cell]);
+    return half_bits_to_float(f[dist_index_64(q, cells, cell)]);
 }
 
 inline void d3q27_f16_store(__global ushort* f, int q, int cells, int cell, float value) {
-    f[q * cells + cell] = float_to_half_bits_opencl(value);
+    f[dist_index_64(q, cells, cell)] = float_to_half_bits_opencl(value);
 }
 
 inline float3 d3q27_fan_unit_vector(uchar fan_dir) {
@@ -5085,7 +5091,7 @@ kernel void output_macro(
 
     float rho = 0.0f, ux = 0.0f, uy = 0.0f, uz = 0.0f;
     for (int q = 0; q < KQ; ++q) {
-        float fq = f[q * cells + cell];
+        float fq = f[dist_index_64(q, cells, cell)];
         rho += fq;
         ux += fq * (float)CX[q]; uy += fq * (float)CY[q]; uz += fq * (float)CZ[q];
     }
@@ -5150,7 +5156,7 @@ kernel void output_macro_strided(
     float uy = 0.0f;
     float uz = 0.0f;
     for (int q = 0; q < KQ; ++q) {
-        float fq = f[q * cells + cell];
+        float fq = f[dist_index_64(q, cells, cell)];
         rho += fq;
         ux += fq * (float)CX[q];
         uy += fq * (float)CY[q];
@@ -5311,6 +5317,7 @@ void release_context_classic_gpu_buffers(ContextState& ctx) {
     ctx.d_thermal_f_post = ctx.d_thermal_f = ctx.d_temp_scratch = ctx.d_temp_next = ctx.d_temp = ctx.d_output = ctx.d_f_post = ctx.d_f = ctx.d_payload = nullptr;
     ctx.gpu_buffers_ready = false;
     ctx.gpu_initialized = false;
+    ctx.classic_output_bytes = 0;
 }
 
 void release_context_gpu_buffers(ContextState& ctx) {
@@ -5408,11 +5415,7 @@ GpuMemoryStats collect_gpu_memory_stats() {
             add_gpu_bytes(static_cast<std::uint64_t>(ctx.cells) * kQ * sizeof(float), stats.classic_dist, stats);
         }
         if (ctx.d_output) {
-            add_gpu_bytes(
-                static_cast<std::uint64_t>(ctx.cells) * static_cast<std::uint64_t>(g_cfg.output_channels) * sizeof(float),
-                stats.classic_output,
-                stats
-            );
+            add_gpu_bytes(static_cast<std::uint64_t>(ctx.classic_output_bytes), stats.classic_output, stats);
         }
         if (ctx.d_temp) {
             add_gpu_bytes(static_cast<std::uint64_t>(ctx.cells) * sizeof(float), stats.classic_temperature, stats);
@@ -5591,7 +5594,6 @@ bool ensure_context_gpu_buffers(ContextState& ctx) {
     const std::size_t payload_bytes = ctx.cells * g_cfg.input_channels * sizeof(float);
     const std::size_t dist_bytes = ctx.cells * kQ * sizeof(float);
     const std::size_t thermal_dist_bytes = ctx.cells * kThermalQ * sizeof(float);
-    const std::size_t output_bytes = ctx.cells * g_cfg.output_channels * sizeof(float);
     const std::size_t temp_bytes = ctx.cells * sizeof(float);
 
     auto create_buffer = [&](cl_mem& target, cl_mem_flags flags, std::size_t bytes, const char* label) -> bool {
@@ -5613,10 +5615,6 @@ bool ensure_context_gpu_buffers(ContextState& ctx) {
         return false;
     }
     if (!create_buffer(ctx.d_f_post, CL_MEM_READ_WRITE, dist_bytes, "clCreateBuffer(d_f_post)")) {
-        release_context_gpu_buffers(ctx);
-        return false;
-    }
-    if (!create_buffer(ctx.d_output, CL_MEM_WRITE_ONLY, output_bytes, "clCreateBuffer(d_output)")) {
         release_context_gpu_buffers(ctx);
         return false;
     }
@@ -5643,12 +5641,32 @@ bool ensure_context_gpu_buffers(ContextState& ctx) {
         }
     }
 
-    if (!ctx.d_payload || !ctx.d_f || !ctx.d_f_post || !ctx.d_output || !ctx.d_temp || !ctx.d_temp_next || !ctx.d_temp_scratch
+    if (!ctx.d_payload || !ctx.d_f || !ctx.d_f_post || !ctx.d_temp || !ctx.d_temp_next || !ctx.d_temp_scratch
         || (thermal_ddf_benchmark_active() && (!ctx.d_thermal_f || !ctx.d_thermal_f_post))) {
         g_opencl.error = "ensure_context_gpu_buffers incomplete allocation";
         release_context_gpu_buffers(ctx); return false;
     }
     ctx.gpu_buffers_ready = true; ctx.gpu_initialized = false;
+    return true;
+}
+
+bool ensure_classic_output_buffer(ContextState& ctx, std::size_t output_bytes) {
+    if (!g_opencl.available || output_bytes == 0) return false;
+    if (ctx.d_output && ctx.classic_output_bytes >= output_bytes) {
+        return true;
+    }
+    if (ctx.d_output) {
+        clReleaseMemObject(ctx.d_output);
+        ctx.d_output = nullptr;
+        ctx.classic_output_bytes = 0;
+    }
+    cl_int err = CL_SUCCESS;
+    ctx.d_output = clCreateBuffer(g_opencl.context, CL_MEM_WRITE_ONLY, output_bytes, nullptr, &err);
+    if (err != CL_SUCCESS || !ctx.d_output) {
+        g_opencl.error = format_opencl_api_error("clCreateBuffer(d_output)", err);
+        return false;
+    }
+    ctx.classic_output_bytes = output_bytes;
     return true;
 }
 
@@ -5673,6 +5691,49 @@ double profiled_event_ms(cl_event event) {
 cl_int enqueue_kernel_1d(cl_kernel kernel, int cells, cl_event* event = nullptr) {
     const size_t global_size = static_cast<size_t>(cells);
     return clEnqueueNDRangeKernel(g_opencl.queue, kernel, 1, nullptr, &global_size, nullptr, 0, nullptr, event);
+}
+
+std::size_t opencl_readback_chunk_bytes() {
+    constexpr std::size_t kDefaultChunkBytes = 256ull * 1024ull * 1024ull;
+    constexpr std::size_t kMinChunkBytes = 16ull * 1024ull * 1024ull;
+    if (const char* env = std::getenv("AERO_LBM_READBACK_CHUNK_MB")) {
+        char* end = nullptr;
+        const unsigned long parsed = std::strtoul(env, &end, 10);
+        if (end != env && parsed > 0) {
+            const std::size_t bytes = static_cast<std::size_t>(parsed) * 1024ull * 1024ull;
+            return std::max(bytes, kMinChunkBytes);
+        }
+    }
+    return kDefaultChunkBytes;
+}
+
+cl_int enqueue_read_buffer_chunked(cl_mem buffer, std::size_t bytes, void* dst) {
+    if (bytes == 0) {
+        return CL_SUCCESS;
+    }
+    if (!dst) {
+        return CL_INVALID_VALUE;
+    }
+    char* out = static_cast<char*>(dst);
+    const std::size_t chunk_bytes = opencl_readback_chunk_bytes();
+    for (std::size_t offset = 0; offset < bytes; offset += chunk_bytes) {
+        const std::size_t count = std::min(chunk_bytes, bytes - offset);
+        const cl_int err = clEnqueueReadBuffer(
+            g_opencl.queue,
+            buffer,
+            CL_TRUE,
+            offset,
+            count,
+            out + offset,
+            0,
+            nullptr,
+            nullptr
+        );
+        if (err != CL_SUCCESS) {
+            return err;
+        }
+    }
+    return CL_SUCCESS;
 }
 
 bool compact_realtime_env_enabled() {
@@ -6844,12 +6905,12 @@ bool opencl_d3q27_f16_inplace_step(
         if (err != CL_SUCCESS) return fail_cl("clEnqueueNDRangeKernel(k_d3q27_f16_output_strided)", err);
         timing.gpu_output_ms += profiled_event_ms(output_event);
         auto readback_begin = Clock::now();
-        cl_event readback_event = nullptr;
-        err = clEnqueueReadBuffer(g_opencl.queue, ctx.d_d3q27_f16_output, CL_TRUE, 0, output_bytes, out, 0, nullptr, &readback_event);
+        err = enqueue_read_buffer_chunked(ctx.d_d3q27_f16_output, output_bytes, out);
         if (err != CL_SUCCESS) return fail_cl("clEnqueueReadBuffer(d_d3q27_f16_output)", err);
-        timing.gpu_readback_ms += profiled_event_ms(readback_event);
+        const double readback_wall_ms = elapsed_ms(readback_begin, Clock::now());
+        timing.gpu_readback_ms += readback_wall_ms;
         timing.readback_bytes += static_cast<std::uint64_t>(output_bytes);
-        timing.readback_ms += elapsed_ms(readback_begin, Clock::now());
+        timing.readback_ms += readback_wall_ms;
     }
 
     ctx.last_force[0] = 0.0f;
@@ -6920,7 +6981,7 @@ bool opencl_compact_step(
     auto readback_begin = Clock::now();
     if (wants_output) {
         const std::size_t output_bytes = ctx.cells * g_cfg.output_channels * sizeof(float);
-        err = clEnqueueReadBuffer(g_opencl.queue, ctx.d_compact_output, CL_TRUE, 0, output_bytes, out, 0, nullptr, nullptr);
+        err = enqueue_read_buffer_chunked(ctx.d_compact_output, output_bytes, out);
         if (err != CL_SUCCESS) return fail_cl("clEnqueueReadBuffer(d_compact_output)", err);
     }
     timing.readback_ms += elapsed_ms(readback_begin, Clock::now());
@@ -7154,6 +7215,7 @@ bool opencl_step(
     auto solver_begin = Clock::now();
     cl_int err = CL_SUCCESS;
     if (!ctx.gpu_initialized) {
+        ensure_opencl_init_host_storage(ctx);
         rebuild_thermal_distributions_from_temperature(ctx);
         err |= clSetKernelArg(g_opencl.k_init, 0, sizeof(cl_mem), &ctx.d_payload);
         err |= clSetKernelArg(g_opencl.k_init, 1, sizeof(int), &g_cfg.input_channels);
@@ -7418,6 +7480,13 @@ bool opencl_step(
     if (!stage_fence("after_stream_collide")) return false;
 
     if (out) {
+        if (!ensure_classic_output_buffer(ctx, output_bytes)) {
+            const std::string reason = g_opencl.error.empty()
+                ? "clCreateBuffer(d_output) failed"
+                : g_opencl.error;
+            g_opencl.error = reason;
+            return false;
+        }
         err = CL_SUCCESS;
         err |= clSetKernelArg(g_opencl.k_output, 0, sizeof(cl_mem), &write_buf);
         err |= clSetKernelArg(g_opencl.k_output, 1, sizeof(cl_mem), &ctx.d_payload);
@@ -7435,7 +7504,7 @@ bool opencl_step(
 
     auto readback_begin = Clock::now();
     if (out) {
-        err = clEnqueueReadBuffer(g_opencl.queue, ctx.d_output, CL_TRUE, 0, output_bytes, out, 0, nullptr, nullptr);
+        err = enqueue_read_buffer_chunked(ctx.d_output, output_bytes, out);
         if (err != CL_SUCCESS) return fail_cl("clEnqueueReadBuffer(d_output)", err);
     }
     if (benchmark_mode_active() && g_benchmark_cfg.preset == AERO_LBM_BENCHMARK_PRESET_CYLINDER_CROSSFLOW_2D) {
@@ -8004,6 +8073,31 @@ bool should_force_cpu_backend() {
 #endif
 }
 
+bool should_require_opencl_backend() {
+#if defined(_MSC_VER)
+    char* env_buf = nullptr;
+    size_t env_len = 0;
+    if (_dupenv_s(&env_buf, &env_len, "AERO_LBM_REQUIRE_OPENCL") != 0 || env_buf == nullptr) {
+        return false;
+    }
+    std::string env_value(env_buf);
+    std::free(env_buf);
+    std::transform(env_value.begin(), env_value.end(), env_value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return env_value == "1" || env_value == "true" || env_value == "on";
+#else
+    const char* env = std::getenv("AERO_LBM_REQUIRE_OPENCL");
+    return env && (
+        std::strcmp(env, "1") == 0
+        || std::strcmp(env, "true") == 0
+        || std::strcmp(env, "TRUE") == 0
+        || std::strcmp(env, "on") == 0
+        || std::strcmp(env, "ON") == 0
+    );
+#endif
+}
+
 void ensure_context_shape(ContextState& ctx, int nx, int ny, int nz, std::size_t cells) {
     if (ctx.nx == nx && ctx.ny == ny && ctx.nz == nz && ctx.cells == cells) return;
     clear_context(ctx);
@@ -8022,6 +8116,25 @@ void ensure_context_temperature_storage(ContextState& ctx) {
     }
     if (ctx.temperature_scratch.size() != ctx.cells) {
         ctx.temperature_scratch.assign(ctx.cells, 0.0f);
+    }
+}
+
+void ensure_opencl_init_host_storage(ContextState& ctx) {
+    ensure_context_temperature_storage(ctx);
+    if (!thermal_ddf_benchmark_active()) {
+        return;
+    }
+    if (ctx.obstacle.size() != ctx.cells) {
+        ctx.obstacle.assign(ctx.cells, 0);
+    }
+    if (ctx.ux.size() != ctx.cells) {
+        ctx.ux.assign(ctx.cells, 0.0f);
+    }
+    if (ctx.uy.size() != ctx.cells) {
+        ctx.uy.assign(ctx.cells, 0.0f);
+    }
+    if (ctx.uz.size() != ctx.cells) {
+        ctx.uz.assign(ctx.cells, 0.0f);
     }
 }
 
@@ -8517,10 +8630,24 @@ bool run_solver_step(
     float output_velocity_scale = 1.0f
 ) {
     bool ok = false;
+    const bool require_opencl = should_require_opencl_backend();
     if (g_cfg.opencl_enabled && benchmark_opencl_supported()) {
         if (!(ok = opencl_step(ctx, packet, overlay_cells, overlay_values, overlay_count, out, timing, output_velocity_scale))) {
-            disable_opencl_runtime(g_opencl.error.empty() ? "OpenCL fail" : g_opencl.error);
+            const std::string reason = g_opencl.error.empty() ? "OpenCL fail" : g_opencl.error;
+            if (require_opencl) {
+                set_last_native_error(reason);
+                return false;
+            }
+            disable_opencl_runtime(reason);
         }
+    }
+    if (!ok && require_opencl) {
+        set_last_native_error(
+            g_cfg.opencl_enabled
+                ? "required OpenCL backend is unavailable for this benchmark path"
+                : "required OpenCL backend is disabled"
+        );
+        return false;
     }
     if (!ok) {
         auto solver_begin = Clock::now();
@@ -8533,10 +8660,13 @@ bool run_solver_step(
 
 bool run_solver_cached_step(ContextState& ctx, float* out, StepTiming& timing, float output_velocity_scale = 1.0f) {
 #if defined(AERO_LBM_OPENCL)
+    const bool require_opencl = should_require_opencl_backend();
     if (g_cfg.opencl_enabled && d3q27_f16_inplace_path_enabled(0) && ctx.d3q27_f16_initialized) {
         if (!opencl_d3q27_f16_inplace_step(ctx, nullptr, out, timing, output_velocity_scale)) {
             const std::string reason = g_opencl.error.empty() ? "OpenCL d3q27 fp16 cached step fail" : g_opencl.error;
-            disable_opencl_runtime(reason);
+            if (!require_opencl) {
+                disable_opencl_runtime(reason);
+            }
             set_last_native_error(reason);
             return false;
         }
@@ -8545,7 +8675,9 @@ bool run_solver_cached_step(ContextState& ctx, float* out, StepTiming& timing, f
     if (g_cfg.opencl_enabled && compact_realtime_path_enabled(0) && ctx.compact_initialized) {
         if (!opencl_compact_step(ctx, nullptr, out, timing, output_velocity_scale)) {
             const std::string reason = g_opencl.error.empty() ? "OpenCL compact cached step fail" : g_opencl.error;
-            disable_opencl_runtime(reason);
+            if (!require_opencl) {
+                disable_opencl_runtime(reason);
+            }
             set_last_native_error(reason);
             return false;
         }
@@ -8566,7 +8698,9 @@ bool run_solver_cached_step(ContextState& ctx, float* out, StepTiming& timing, f
     }
     if (!opencl_step(ctx, nullptr, nullptr, nullptr, 0, out, timing, output_velocity_scale)) {
         const std::string reason = g_opencl.error.empty() ? "OpenCL cached step fail" : g_opencl.error;
-        disable_opencl_runtime(reason);
+        if (!require_opencl) {
+            disable_opencl_runtime(reason);
+        }
         set_last_native_error(reason);
         return false;
     }
@@ -8665,12 +8799,12 @@ static bool native_step_raw_dims_impl(
     ContextState& ctx = *locked_context.ctx;
     ensure_context_shape(ctx, nx, ny, nz, cells);
 #if defined(AERO_LBM_OPENCL)
-    const bool may_use_realtime = g_cfg.opencl_enabled
-        && (compact_realtime_path_enabled(0) || d3q27_f16_inplace_path_enabled(0));
+    const bool may_use_opencl_step = g_cfg.opencl_enabled
+        && (benchmark_opencl_supported() || compact_realtime_path_enabled(0) || d3q27_f16_inplace_path_enabled(0));
 #else
-    const bool may_use_realtime = false;
+    const bool may_use_opencl_step = false;
 #endif
-    if (!may_use_realtime && (ctx.f.empty() || ctx.f_post.empty() || ctx.cells == 0)) {
+    if (!may_use_opencl_step && (ctx.f.empty() || ctx.f_post.empty() || ctx.cells == 0)) {
         allocate_cpu_context(ctx, ctx.nx, ctx.ny, ctx.nz);
     }
 
@@ -8728,12 +8862,14 @@ static bool native_step_raw_dims_with_sparse_overlays_impl(
     ContextState& ctx = *locked_context.ctx;
     ensure_context_shape(ctx, nx, ny, nz, cells);
 #if defined(AERO_LBM_OPENCL)
-    const bool may_use_realtime = g_cfg.opencl_enabled
-        && (compact_realtime_path_enabled(overlay_count) || d3q27_f16_inplace_path_enabled(overlay_count));
+    const bool may_use_opencl_step = g_cfg.opencl_enabled
+        && (benchmark_opencl_supported()
+            || compact_realtime_path_enabled(overlay_count)
+            || d3q27_f16_inplace_path_enabled(overlay_count));
 #else
-    const bool may_use_realtime = false;
+    const bool may_use_opencl_step = false;
 #endif
-    if (!may_use_realtime && (ctx.f.empty() || ctx.f_post.empty() || ctx.cells == 0)) {
+    if (!may_use_opencl_step && (ctx.f.empty() || ctx.f_post.empty() || ctx.cells == 0)) {
         allocate_cpu_context(ctx, ctx.nx, ctx.ny, ctx.nz);
     }
 
@@ -9300,7 +9436,7 @@ static bool native_extract_flow_atlas_raw_dims_impl(
             g_opencl.error = format_opencl_api_error("clEnqueueNDRangeKernel(k_d3q27_f16_output_strided)", err);
             return false;
         }
-        err = clEnqueueReadBuffer(g_opencl.queue, ctx.d_d3q27_f16_output, CL_TRUE, 0, bytes, out_flow_atlas, 0, nullptr, nullptr);
+        err = enqueue_read_buffer_chunked(ctx.d_d3q27_f16_output, bytes, out_flow_atlas);
         if (err != CL_SUCCESS) {
             g_opencl.error = format_opencl_api_error("clEnqueueReadBuffer(d_d3q27_f16_output_atlas)", err);
             return false;
@@ -9334,7 +9470,7 @@ static bool native_extract_flow_atlas_raw_dims_impl(
             g_opencl.error = format_opencl_api_error("clEnqueueNDRangeKernel(k_compact_output_strided)", err);
             return false;
         }
-        err = clEnqueueReadBuffer(g_opencl.queue, ctx.d_compact_output, CL_TRUE, 0, bytes, out_flow_atlas, 0, nullptr, nullptr);
+        err = enqueue_read_buffer_chunked(ctx.d_compact_output, bytes, out_flow_atlas);
         if (err != CL_SUCCESS) {
             g_opencl.error = format_opencl_api_error("clEnqueueReadBuffer(d_compact_output_atlas)", err);
             return false;
@@ -9343,6 +9479,10 @@ static bool native_extract_flow_atlas_raw_dims_impl(
     }
 
     if (g_cfg.opencl_enabled && ctx.gpu_buffers_ready && ctx.gpu_initialized) {
+        const std::size_t bytes = static_cast<std::size_t>(value_count) * sizeof(float);
+        if (!ensure_classic_output_buffer(ctx, bytes)) {
+            return false;
+        }
         cl_mem current_flow = (ctx.step_counter % 2 == 0) ? ctx.d_f : ctx.d_f_post;
         cl_int err = CL_SUCCESS;
         err |= clSetKernelArg(g_opencl.k_output_strided, 0, sizeof(cl_mem), &current_flow);
@@ -9365,8 +9505,7 @@ static bool native_extract_flow_atlas_raw_dims_impl(
             g_opencl.error = format_opencl_api_error("clEnqueueNDRangeKernel(k_output_strided)", err);
             return false;
         }
-        const std::size_t bytes = static_cast<std::size_t>(value_count) * sizeof(float);
-        err = clEnqueueReadBuffer(g_opencl.queue, ctx.d_output, CL_TRUE, 0, bytes, out_flow_atlas, 0, nullptr, nullptr);
+        err = enqueue_read_buffer_chunked(ctx.d_output, bytes, out_flow_atlas);
         if (err != CL_SUCCESS) {
             g_opencl.error = format_opencl_api_error("clEnqueueReadBuffer(d_output_atlas)", err);
             return false;
@@ -10279,6 +10418,14 @@ AERO_LBM_CAPI_EXPORT const char* aero_lbm_runtime_info(void) {
 }
 
 AERO_LBM_CAPI_EXPORT const char* aero_lbm_last_error(void) {
+    if (!g_last_native_error.empty()) {
+        return g_last_native_error.c_str();
+    }
+#if defined(AERO_LBM_OPENCL)
+    if (!g_opencl.error.empty()) {
+        return g_opencl.error.c_str();
+    }
+#endif
     return g_last_native_error.c_str();
 }
 

@@ -98,6 +98,13 @@ AERO_LBM_CAPI_EXPORT int aero_solver_advance_wind_tunnel(
     int steps
 );
 
+AERO_LBM_CAPI_EXPORT int aero_solver_extract_flow_atlas(
+    long long handle,
+    int stride,
+    float* out_flow_atlas,
+    int out_value_count
+);
+
 AERO_LBM_CAPI_EXPORT int aero_solver_run_wind_tunnel(
     const AeroStepInput* input,
     AeroStepOutput* output

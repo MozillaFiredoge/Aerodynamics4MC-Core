@@ -14,9 +14,11 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.core.BlockPos;
+//? >=1.21.11 {
 import net.minecraft.gizmos.GizmoStyle;
 import net.minecraft.gizmos.Gizmos;
 import net.minecraft.gizmos.TextGizmo;
+//?}
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.AABB;
@@ -282,7 +284,7 @@ public final class AeroVisualizer {
         });
     }
 
-    public void renderAtlasOverlay(/*? fabric{ */ /*WorldRenderContext *//*?} neoforge{ */ RenderLevelStageEvent.AfterTranslucentBlocks /*?} */ context) {
+    public void renderAtlasOverlay(/*? fabric{ */ /*WorldRenderContext *//*?} neoforge{ */ RenderLevelStageEvent /*?} */ context) {
         if (!streamingEnabled || (remoteWindows.isEmpty() && localWindows.isEmpty())) {
             return;
         }
@@ -293,50 +295,65 @@ public final class AeroVisualizer {
         Identifier dimensionId = client.level.dimension().identifier();
         Vec3 cameraPos = client.gameRenderer.getMainCamera().position();
 
+		//? fabric {
+		/*VertexConsumer lineBuffer = context.consumers().getBuffer(RenderTypes.lines());
+		*///?} neoforge {
 		MultiBufferSource.BufferSource bufferSource = client.renderBuffers().bufferSource();
 		VertexConsumer lineBuffer = bufferSource.getBuffer(RenderTypes.lines());
+		//?}
 
         PoseStack matrices =  /*? fabric{ */ /*context.matrices(); *//*?} neoforge{ */ context.getPoseStack(); /*?} */
 
+		//? >=1.21.11 {
 		try (var ignored = client.collectPerTickGizmos()) {
-            for (RemoteFlowField field : localWindows.values()) {
-                if (!field.dimensionId().equals(dimensionId)) {
-                    continue;
-                }
-                double distanceSq = field.visibleBox().distanceToSqr(cameraPos);
-                if (distanceSq > MAX_RENDER_DISTANCE * MAX_RENDER_DISTANCE) {
-                    continue;
-                }
-                renderRegionOutline(field, distanceSq);
-                if (distanceSq <= REMOTE_VECTOR_RENDER_DISTANCE * REMOTE_VECTOR_RENDER_DISTANCE) {
-                    renderFlowRendererField(lineBuffer, matrices, field, cameraPos);
-                }
-            }
-            for (RemoteFlowField field : remoteWindows.values()) {
-                if (!field.dimensionId().equals(dimensionId)) {
-                    continue;
-                }
-                if (localWindows.containsKey(new WindowKey(field.dimensionId(), field.origin()))) {
-                    continue;
-                }
-                double distanceSq = field.visibleBox().distanceToSqr(cameraPos);
-                if (distanceSq > MAX_RENDER_DISTANCE * MAX_RENDER_DISTANCE) {
-                    continue;
-                }
-                renderRegionOutline(field, distanceSq);
-                if (distanceSq <= REMOTE_VECTOR_RENDER_DISTANCE * REMOTE_VECTOR_RENDER_DISTANCE) {
-                    renderFlowRendererField(lineBuffer, matrices, field, cameraPos);
-                }
-            }
-            AnalysisSliceView analysisSlice = prepareAnalysisSlice(client, dimensionId, cameraPos);
-            if (analysisSlice != null) {
-                renderAnalysisOverlay(analysisSlice);
-            }
-        }
+			renderAtlasOverlayFields(client, dimensionId, cameraPos, lineBuffer, matrices);
+		}
+		//?} <1.21.11 {
+		/*renderAtlasOverlayFields(client, dimensionId, cameraPos, lineBuffer, matrices);
+		*///?}
+		//? neoforge {
 		bufferSource.endBatch(RenderTypes.lines());
+		//?}
     }
 
+	private void renderAtlasOverlayFields(Minecraft client, Identifier dimensionId, Vec3 cameraPos, VertexConsumer lineBuffer, PoseStack matrices) {
+		for (RemoteFlowField field : localWindows.values()) {
+			if (!field.dimensionId().equals(dimensionId)) {
+				continue;
+			}
+			double distanceSq = field.visibleBox().distanceToSqr(cameraPos);
+			if (distanceSq > MAX_RENDER_DISTANCE * MAX_RENDER_DISTANCE) {
+				continue;
+			}
+			renderRegionOutline(field, distanceSq);
+			if (distanceSq <= REMOTE_VECTOR_RENDER_DISTANCE * REMOTE_VECTOR_RENDER_DISTANCE) {
+				renderFlowRendererField(lineBuffer, matrices, field, cameraPos);
+			}
+		}
+		for (RemoteFlowField field : remoteWindows.values()) {
+			if (!field.dimensionId().equals(dimensionId)) {
+				continue;
+			}
+			if (localWindows.containsKey(new WindowKey(field.dimensionId(), field.origin()))) {
+				continue;
+			}
+			double distanceSq = field.visibleBox().distanceToSqr(cameraPos);
+			if (distanceSq > MAX_RENDER_DISTANCE * MAX_RENDER_DISTANCE) {
+				continue;
+			}
+			renderRegionOutline(field, distanceSq);
+			if (distanceSq <= REMOTE_VECTOR_RENDER_DISTANCE * REMOTE_VECTOR_RENDER_DISTANCE) {
+				renderFlowRendererField(lineBuffer, matrices, field, cameraPos);
+			}
+		}
+		AnalysisSliceView analysisSlice = prepareAnalysisSlice(client, dimensionId, cameraPos);
+		if (analysisSlice != null) {
+			renderAnalysisOverlay(analysisSlice);
+		}
+	}
+
     private void renderAnalysisOverlay(AnalysisSliceView analysisSlice) {
+		//? >=1.21.11 {
         AnalysisFlowField field = analysisSlice.field();
         int sliceY = analysisSlice.sliceY();
         float speedRange = analysisSlice.speedRange();
@@ -356,6 +373,7 @@ public final class AeroVisualizer {
                 labelPos,
                 TextGizmo.Style.forColorAndCentered(argb(0.92f, 0.96f, 0.98f, 1.0f)).withScale(0.03f)
         ).setAlwaysOnTop().persistForMillis(1);
+		//?}
     }
 
     private AnalysisSliceView prepareAnalysisSlice(Minecraft client, Identifier dimensionId, Vec3 cameraPos) {
@@ -399,6 +417,7 @@ public final class AeroVisualizer {
     }
 
     private void renderAnalysisSliceGlyphs(AnalysisFlowField field, int sliceY, float speedRange) {
+		//? >=1.21.11 {
         int resolution = field.fullResolution();
         double arrowBaseY = field.origin().getY() + sliceY + ANALYSIS_SLICE_HEIGHT_OFFSET + 0.08;
         for (int x = 0; x < resolution; x += ANALYSIS_SLICE_GLYPH_STEP) {
@@ -418,6 +437,7 @@ public final class AeroVisualizer {
                 Gizmos.arrow(start, end, glyphColor, ANALYSIS_SLICE_GLYPH_WIDTH).setAlwaysOnTop().persistForMillis(1);
             }
         }
+		//?}
     }
 
     private void renderFlowRendererField(VertexConsumer buffer, PoseStack matrices, RemoteFlowField field, Vec3 cameraPos) {
@@ -470,7 +490,7 @@ public final class AeroVisualizer {
                     buffer.addVertex(matrix, fx, fy, fz)
                             .setColor(r, g, b, 255)
                             .setNormal(entry, (float) direction.x, (float) direction.y, (float) direction.z)
-                            .setLineWidth(1.2f);
+                            /*? if >=1.21.11 {*/.setLineWidth(1.2f)/*?}*/;
                     buffer.addVertex(
                                     matrix,
                                     fx + (float) direction.x * lineLength,
@@ -479,7 +499,7 @@ public final class AeroVisualizer {
                             )
                             .setColor(r, g, b, 255)
                             .setNormal(entry, (float) direction.x, (float) direction.y, (float) direction.z)
-                            .setLineWidth(1.2f);
+                            /*? if >=1.21.11 {*/.setLineWidth(1.2f)/*?}*/;
                 }
             }
         }
@@ -649,7 +669,7 @@ public final class AeroVisualizer {
                     )
                     .setColor(r, g, b, 255)
                     .setNormal(entry, (float) segDir.x, (float) segDir.y, (float) segDir.z)
-                    .setLineWidth(3.0f);
+                    /*? if >=1.21.11 {*/.setLineWidth(3.0f)/*?}*/;
             buffer.addVertex(
                             matrix,
                             (float) (nextPos.x - cameraPos.x),
@@ -658,7 +678,7 @@ public final class AeroVisualizer {
                     )
                     .setColor(r, g, b, 255)
                     .setNormal(entry, (float) segDir.x, (float) segDir.y, (float) segDir.z)
-                    .setLineWidth(3.0f);
+                    /*? if >=1.21.11 {*/.setLineWidth(3.0f)/*?}*/;
 
             pos = nextPos;
             currentField = nextField;
@@ -749,6 +769,7 @@ public final class AeroVisualizer {
     }
 
     private void renderRegionOutline(RemoteFlowField field, double distanceSq) {
+		//? >=1.21.11 {
         FlowVisual visual = field.visual();
         float maxSpeedNorm = clamp01(visual.maxSpeed() / 1.5f);
         float distanceNorm = clamp01((float) (Math.sqrt(distanceSq) / MAX_RENDER_DISTANCE));
@@ -757,6 +778,7 @@ public final class AeroVisualizer {
         int fillColor = viridisColor(maxSpeedNorm * 0.65f, 0.03f + 0.04f * distanceFade);
         GizmoStyle style = GizmoStyle.strokeAndFill(strokeColor, 1.0f + 0.6f * maxSpeedNorm, fillColor);
         Gizmos.cuboid(field.visibleBox(), style).setAlwaysOnTop().persistForMillis(1);
+		//?}
     }
 
     private static float decodeVelocity(short value) {

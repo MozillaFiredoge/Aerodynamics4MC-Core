@@ -1,7 +1,7 @@
 mod.id = "aerodynamics4mc"
 mod.name = "Aerodynamics4MC"
 mod.group = "com"
-mod.version = "0.1.0"
+mod.version = "0.1.1"
 mod.channel_tag = "-alpha.1"
 mod.description = "Real-time aerodynamics capture and visualization."
 mod.authors = ["MozillaFiredoge"]
@@ -17,7 +17,7 @@ mod.discord_url = ""
 [[mod.pom.developers]]
 id = "mozillafiredoge"
 name = "MozillaFiredoge"
-url = "https://github.com/ghost"
+url = "https://github.com/MozillaFiredoge"
 
 [fabric]
 deps.fabric-loader = "0.19.2"

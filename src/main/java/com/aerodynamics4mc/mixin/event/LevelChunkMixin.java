@@ -9,7 +9,6 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.chunk.LevelChunk;
-import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -41,7 +40,7 @@ public abstract class LevelChunkMixin {
 	}
 
 	@Inject(method = "removeBlockEntity", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/block/entity/BlockEntity;setRemoved()V"))
-	private void onRemoveBlockEntity(BlockPos pos, CallbackInfo ci, @Local(name = "blockentity") @Nullable BlockEntity removeThis) {
+	private void onRemoveBlockEntity(BlockPos pos, CallbackInfo ci, @Local(name = "blockentity") BlockEntity removeThis) {
 		if (removeThis != null && this.getLevel() instanceof ServerLevel) {
 			AeroServerRuntime.getInstance().onBlockEntityUnload(removeThis,(ServerLevel) this.getLevel());
 		}

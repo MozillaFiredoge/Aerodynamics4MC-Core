@@ -45,8 +45,18 @@ public class NeoforgeClientEventSubscriber {
 		});
 
 		// Render events
+		//? >=1.21.11 {
 		NeoForge.EVENT_BUS.addListener((RenderLevelStageEvent.AfterTranslucentBlocks event) -> AeroClientMod.getInstance().getVisualizer().renderAtlasOverlay(event));
 		NeoForge.EVENT_BUS.addListener((RenderLevelStageEvent.AfterLevel event) -> AeroClientMod.getInstance().getIrisWindBridge().onRenderFrame());
+		//?} <1.21.11 {
+		/*NeoForge.EVENT_BUS.addListener((RenderLevelStageEvent event) -> {
+			if (event.getStage() == RenderLevelStageEvent.Stage.AFTER_TRANSLUCENT_BLOCKS) {
+				AeroClientMod.getInstance().getVisualizer().renderAtlasOverlay(event);
+			} else if (event.getStage() == RenderLevelStageEvent.Stage.AFTER_LEVEL) {
+				AeroClientMod.getInstance().getIrisWindBridge().onRenderFrame();
+			}
+		});
+		*///?}
 
 		// Commands
 		NeoForge.EVENT_BUS.addListener((RegisterCommandsEvent event) -> {

@@ -54,11 +54,21 @@ public final class ModBlocks {
 	public static final DeferredBlock<Block> WIND_TURBINE_PROBE_BLOCK = registerBlock(WIND_TURBINE_PROBE_ID.getPath(), properties -> new WindTurbineProbeBlock(properties.strength(1.5f)));
 
 	public static final java.util.function.Supplier<BlockEntityType<FanBlockEntity>> FAN_BLOCK_ENTITY =
-			BLOCK_ENTITIES.register(FAN_ID.getPath(), () -> new BlockEntityType<>(
-					FanBlockEntity::new, FAN_BLOCK.get()));
+			BLOCK_ENTITIES.register(FAN_ID.getPath(), () ->
+					//? >=1.21.11 {
+					new BlockEntityType<>(FanBlockEntity::new, FAN_BLOCK.get())
+					//?} <1.21.11 {
+					/*new BlockEntityType<>(FanBlockEntity::new, java.util.Set.of(FAN_BLOCK.get()), null)
+					*///?}
+			);
 	public static final java.util.function.Supplier<BlockEntityType<WindTurbineProbeBlockEntity>> WIND_TURBINE_PROBE_BLOCK_ENTITY =
-			BLOCK_ENTITIES.register(WIND_TURBINE_PROBE_ID.getPath(), () -> new BlockEntityType<>(
-					WindTurbineProbeBlockEntity::new, WIND_TURBINE_PROBE_BLOCK.get()));
+			BLOCK_ENTITIES.register(WIND_TURBINE_PROBE_ID.getPath(), () ->
+					//? >=1.21.11 {
+					new BlockEntityType<>(WindTurbineProbeBlockEntity::new, WIND_TURBINE_PROBE_BLOCK.get())
+					//?} <1.21.11 {
+					/*new BlockEntityType<>(WindTurbineProbeBlockEntity::new, java.util.Set.of(WIND_TURBINE_PROBE_BLOCK.get()), null)
+					*///?}
+			);
 	//?}
 
 	//? fabric {
@@ -165,7 +175,7 @@ public final class ModBlocks {
 	}
 
 	private static <T extends Block> void registerBlockItem(String name, DeferredBlock<T> block) {
-		ITEMS.registerItem(name, properties -> new BlockItem(block.get(), properties.useBlockDescriptionPrefix()));
+		ITEMS.registerItem(name, properties -> new BlockItem(block.get(), properties/*? if >=1.21.11 {*/.useBlockDescriptionPrefix()/*?}*/));
 	}
 	//?}
 }

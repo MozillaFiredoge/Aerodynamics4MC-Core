@@ -8,10 +8,8 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseEntityBlock;
@@ -21,7 +19,6 @@ import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
-import org.jspecify.annotations.Nullable;
 
 import java.util.Locale;
 
@@ -38,12 +35,12 @@ public class WindTurbineProbeBlock extends BaseEntityBlock {
     }
 
     @Override
-    public @Nullable BlockEntity newBlockEntity(BlockPos blockPos, BlockState blockState) {
+    public BlockEntity newBlockEntity(BlockPos blockPos, BlockState blockState) {
         return new WindTurbineProbeBlockEntity(blockPos, blockState);
     }
 
     @Override
-    public @Nullable <T extends BlockEntity> BlockEntityTicker<T> getTicker(Level level, BlockState blockState, BlockEntityType<T> blockEntityType) {
+    public <T extends BlockEntity> BlockEntityTicker<T> getTicker(Level level, BlockState blockState, BlockEntityType<T> blockEntityType) {
         if (level.isClientSide()) {
             return null;
         }
@@ -58,12 +55,6 @@ public class WindTurbineProbeBlock extends BaseEntityBlock {
 
     @Override
     protected InteractionResult useWithoutItem(BlockState blockState, Level level, BlockPos blockPos, Player player, BlockHitResult blockHitResult) {
-        return showStatus(blockState, level, blockPos, player);
-    }
-
-
-    @Override
-    protected InteractionResult useItemOn(ItemStack itemStack, BlockState blockState, Level level, BlockPos blockPos, Player player, InteractionHand interactionHand, BlockHitResult blockHitResult) {
         return showStatus(blockState, level, blockPos, player);
     }
 
@@ -96,7 +87,7 @@ public class WindTurbineProbeBlock extends BaseEntityBlock {
         probe.sampleNow(serverWorld, state);
         if (!probe.hasSample()) {
             player.displayClientMessage(Component.translatable("message.aerodynamics4mc.wind_turbine_probe.no_flow").withStyle(ChatFormatting.GRAY), false);
-            return InteractionResult.SUCCESS_SERVER;
+            return InteractionResult.SUCCESS;
         }
 
         GameplayWindSample sample = probe.lastSample();
@@ -129,7 +120,7 @@ public class WindTurbineProbeBlock extends BaseEntityBlock {
                 ).withStyle(ChatFormatting.GRAY),
                 false
         );
-        return InteractionResult.SUCCESS_SERVER;
+        return InteractionResult.SUCCESS;
     }
 
     private static int redstonePower(BlockGetter world, BlockPos pos) {

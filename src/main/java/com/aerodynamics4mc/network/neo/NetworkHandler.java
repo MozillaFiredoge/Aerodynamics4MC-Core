@@ -11,10 +11,13 @@ import com.aerodynamics4mc.network.packet.AeroFlowPacket;
 import com.aerodynamics4mc.network.packet.AeroRuntimeStatePacket;
 import com.aerodynamics4mc.runtime.AeroServerRuntime;
 import com.github.razorplay.packet_handler.network.IPacket;
+import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
+//? >=1.21.11 {
 import net.neoforged.neoforge.client.network.event.RegisterClientPayloadHandlersEvent;
+//?}
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
@@ -32,19 +35,37 @@ public class NetworkHandler {
 
 		PayloadRegistrar registrar = event.registrar("1.0");
 
+		//? >=1.21.11 {
 		registrar.playBidirectional(
 				ForgeCustomPayload.TYPE,
 				ForgeCustomPayload.STREAM_CODEC,
 				NetworkHandler::handleServer
 		);
+		//?} <1.21.11 {
+		/*registrar.playBidirectional(
+				ForgeCustomPayload.TYPE,
+				ForgeCustomPayload.STREAM_CODEC,
+				NetworkHandler::handleByFlow
+		);
+		*///?}
 	}
 
+	//? >=1.21.11 {
 	@SubscribeEvent
 	public static void register(RegisterClientPayloadHandlersEvent event) {
 		event.register(
 				ForgeCustomPayload.TYPE,
 				NetworkHandler::handleClient
 		);
+	}
+	//?}
+
+	private static void handleByFlow(ForgeCustomPayload payload, IPayloadContext context) {
+		if (context.flow() == PacketFlow.CLIENTBOUND) {
+			handleClient(payload, context);
+			return;
+		}
+		handleServer(payload, context);
 	}
 
 	private static void handleClient(ForgeCustomPayload payload, IPayloadContext context) {

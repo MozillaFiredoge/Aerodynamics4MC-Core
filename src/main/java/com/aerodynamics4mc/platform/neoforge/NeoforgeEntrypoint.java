@@ -9,6 +9,7 @@ import com.aerodynamics4mc.runtime.AeroServerRuntime;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.chunk.LevelChunk;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
@@ -34,12 +35,18 @@ public class NeoforgeEntrypoint {
 		NeoForge.EVENT_BUS.addListener((ServerTickEvent.Post event) -> runtime.onServerTick(event.getServer()));
 		NeoForge.EVENT_BUS.addListener((ChunkEvent.Load event) -> {
 			if (event.getLevel() instanceof ServerLevel serverLevel) {
-				runtime.onChunkLoad(serverLevel, event.getChunk());
+				LevelChunk chunk = asLevelChunk(event.getChunk());
+				if (chunk != null) {
+					runtime.onChunkLoad(serverLevel, chunk);
+				}
 			}
 		});
 		NeoForge.EVENT_BUS.addListener((ChunkEvent.Unload event) -> {
 			if (event.getLevel() instanceof ServerLevel serverLevel) {
-				runtime.onChunkUnload(serverLevel, event.getChunk());
+				LevelChunk chunk = asLevelChunk(event.getChunk());
+				if (chunk != null) {
+					runtime.onChunkUnload(serverLevel, chunk);
+				}
 			}
 		});
 
@@ -66,6 +73,10 @@ public class NeoforgeEntrypoint {
 		});
 		NeoForge.EVENT_BUS.addListener((ServerStartedEvent event) -> runtime.enableStreamingOnServerStart(event.getServer()));
 		NeoForge.EVENT_BUS.addListener((ServerStoppedEvent event) -> runtime.shutdownAll(event.getServer()));
+	}
+
+	private static LevelChunk asLevelChunk(Object chunk) {
+		return chunk instanceof LevelChunk levelChunk ? levelChunk : null;
 	}
 }
 //?}

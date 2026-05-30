@@ -6500,7 +6500,7 @@ public final class AeroServerRuntime {
 	}
 
 	private CoarseWindSyncState coarseWindSyncStateForPlayer(ServerPlayer player) {
-		ServerLevel world = player.level();
+		ServerLevel world = (ServerLevel) player.level();
 		BlockPos playerPos = player.blockPosition();
 		int cellSize = COARSE_WIND_SYNC_CELL_SIZE_BLOCKS;
 		return new CoarseWindSyncState(
@@ -6513,7 +6513,7 @@ public final class AeroServerRuntime {
 	}
 
 	private AeroCoarseWindPacket buildCoarseWindPayloadForPlayer(ServerPlayer player, CoarseWindSyncState state) {
-		ServerLevel world = player.level();
+		ServerLevel world = (ServerLevel) player.level();
 		if (world == null || state == null) {
 			return null;
 		}
@@ -6603,7 +6603,7 @@ public final class AeroServerRuntime {
 		Map<WindowKey, AeroFlowAnalysisPacket> payloadCache = new HashMap<>();
 		Set<WindowKey> missingKeys = new HashSet<>();
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			ServerLevel world = player.level();
+			ServerLevel world = (ServerLevel) player.level();
 			WindowKey key = new WindowKey(world.dimension(), windowOriginFromCoreOrigin(coreOriginForPosition(player.blockPosition())));
 			BrickRuntimeAtlasSnapshot atlas = frame.regionAtlases().get(key);
 			if (atlas == null || missingKeys.contains(key)) {

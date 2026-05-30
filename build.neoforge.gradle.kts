@@ -14,6 +14,19 @@ stonecutter {
 	replacements.string(current.parsed < "1.21.11") {
 		replace("Identifier", "ResourceLocation")
 		replace("identifier()", "location()")
+		replace("net.minecraft.client.renderer.rendertype.RenderTypes", "net.minecraft.client.renderer.RenderType")
+		replace("RenderTypes.lines()", "RenderType.lines()")
+		replace("user.getCooldowns().addCooldown(user.getItemInHand(hand), 10)", "user.getCooldowns().addCooldown(user.getItemInHand(hand).getItem(), 10)")
+		replace("world.updateNeighborsAt(worldPosition, state.getBlock(), null)", "world.updateNeighborsAt(worldPosition, state.getBlock())")
+		replace(".getMainCamera().position()", ".getMainCamera().getPosition()")
+		replace("client.getDeltaTracker()", "client.getTimer()")
+		replace("new DynamicTexture(() -> \"aerodynamics4mc_iris_wind_bridge\", image)", "new DynamicTexture(image)")
+		replace("image.setPixel(", "image.setPixelRGBA(")
+		replace("world.getMinY()", "world.getMinBuildHeight()")
+		replace("world.getMaxY()", "world.getMaxBuildHeight()")
+		replace("world.getMinSectionY()", "world.getMinSection()")
+		replace("world.getMaxSectionY()", "world.getMaxSection()")
+		replace("Commands.hasPermission(Commands.LEVEL_ADMINS)", "source -> source.hasPermission(Commands.LEVEL_ADMINS)")
 	}
 }
 
@@ -41,10 +54,10 @@ mixins {
 			"client.AscendingParticleMixin",
 			"client.CampfireSmokeParticleMixin",
 			"client.ClientWorldBlockStateMixin",
-			"client.LeavesParticleMixin",
 			"client.ParticleAccessor",
 			"client.ParticleMixin"
 		)
+		minVersion("1.21.11", "client.LeavesParticleMixin")
 	}
 }
 

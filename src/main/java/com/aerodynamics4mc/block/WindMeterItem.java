@@ -10,13 +10,19 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
+//? <1.21.11 {
+/*import net.minecraft.world.InteractionResultHolder;
+*///?}
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.TooltipFlag;
+//? >=1.21.11 {
 import net.minecraft.world.item.component.TooltipDisplay;
+//?}
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
 
@@ -38,7 +44,17 @@ public final class WindMeterItem extends Item {
 	}
 
 	@Override
+	//? >=1.21.11 {
 	public InteractionResult use(Level world, Player user, InteractionHand hand) {
+		return useWindMeter(world, user, hand);
+	}
+	//?} <1.21.11 {
+	/*public InteractionResultHolder<ItemStack> use(Level world, Player user, InteractionHand hand) {
+		return new InteractionResultHolder<>(useWindMeter(world, user, hand), user.getItemInHand(hand));
+	}
+	*///?}
+
+	private InteractionResult useWindMeter(Level world, Player user, InteractionHand hand) {
 		if (world.isClientSide()) {
 			return InteractionResult.SUCCESS;
 		}
@@ -55,7 +71,7 @@ public final class WindMeterItem extends Item {
 
 		if (!sample.hasFlow()) {
 			user.displayClientMessage(Component.translatable("message.aerodynamics4mc.wind_meter.no_flow").withStyle(ChatFormatting.GRAY), false);
-			return InteractionResult.SUCCESS_SERVER;
+			return InteractionResult.SUCCESS;
 		}
 
 		Vec3 effective = sample.effectiveVelocity();
@@ -116,13 +132,19 @@ public final class WindMeterItem extends Item {
 					false
 			);
 		}
-		return InteractionResult.SUCCESS_SERVER;
+		return InteractionResult.SUCCESS;
 	}
 
 	@Override
+	//? >=1.21.11 {
 	public void appendHoverText(ItemStack stack, TooltipContext context, TooltipDisplay display, Consumer<Component> tooltip, TooltipFlag type) {
 		tooltip.accept(Component.translatable("item.aerodynamics4mc.wind_meter.tooltip").withStyle(ChatFormatting.GRAY));
 	}
+	//?} <1.21.11 {
+	/*public void appendHoverText(ItemStack stack, TooltipContext context, List<Component> tooltip, TooltipFlag type) {
+		tooltip.add(Component.translatable("item.aerodynamics4mc.wind_meter.tooltip").withStyle(ChatFormatting.GRAY));
+	}
+	*///?}
 
 	private static Component directionComponent(float x, float z) {
 		double horizontalSpeed = Math.sqrt(x * x + z * z);
