@@ -4,6 +4,7 @@ import com.aerodynamics4mc.runtime.AeroServerRuntime;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.state.BlockState;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -18,6 +19,17 @@ abstract class ServerWorldBlockStateMixin {
     @Unique
     private static final ThreadLocal<ArrayDeque<ChangeContext>> A4MC_BLOCK_CHANGE_STACK =
             ThreadLocal.withInitial(ArrayDeque::new);
+
+    @Inject(method = "precipitationAt", at = @At("HEAD"), cancellable = true)
+    private void a4mc$useLocalPrecipitation(BlockPos pos, CallbackInfoReturnable<Biome.Precipitation> cir) {
+        if (!((Object) this instanceof ServerLevel world)) {
+            return;
+        }
+        Biome.Precipitation precipitation = AeroServerRuntime.getInstance().localPrecipitationAt(world, pos);
+        if (precipitation != null) {
+            cir.setReturnValue(precipitation);
+        }
+    }
 
     @Inject(
             method = "setBlockAndUpdate(Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/state/BlockState;)Z",

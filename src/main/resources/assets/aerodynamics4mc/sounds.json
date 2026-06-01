@@ -1,0 +1,44 @@
+{
+  "wind_breeze_loop": {
+    "sounds": [
+      {
+        "name": "aerodynamics4mc:wind/breeze_loop"
+      }
+    ]
+  },
+  "wind_strong_loop": {
+    "sounds": [
+      {
+        "name": "aerodynamics4mc:wind/strong_loop"
+      }
+    ]
+  },
+  "leaf_rustle_loop": {
+    "sounds": [
+      {
+        "name": "aerodynamics4mc:wind/leaf_rustle_loop"
+      }
+    ]
+  },
+  "grass_rustle_loop": {
+    "sounds": [
+      {
+        "name": "aerodynamics4mc:wind/grass_rustle_loop"
+      }
+    ]
+  },
+  "ground_wind_loop": {
+    "sounds": [
+      {
+        "name": "aerodynamics4mc:wind/ground_wind_loop"
+      }
+    ]
+  },
+  "wind_gust_whoosh": {
+    "sounds": [
+      {
+        "name": "aerodynamics4mc:wind/gust_whoosh_1"
+      }
+    ]
+  }
+}

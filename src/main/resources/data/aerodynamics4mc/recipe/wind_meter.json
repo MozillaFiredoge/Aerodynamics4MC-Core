@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "tools",
+  "pattern": [
+    "FFF",
+    "FCF",
+    "FFF"
+  ],
+  "key": {
+    "F": "minecraft:feather",
+    "C": "minecraft:compass"
+  },
+  "result": {
+    "id": "aerodynamics4mc:wind_meter",
+    "count": 1
+  }
+}

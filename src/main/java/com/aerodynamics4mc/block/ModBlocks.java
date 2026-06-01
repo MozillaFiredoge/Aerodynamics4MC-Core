@@ -42,16 +42,21 @@ public final class ModBlocks {
 	public static final Identifier FAN_ID = Identifier.fromNamespaceAndPath(ModTemplate.MOD_ID, "fan");
 	public static final Identifier DUCT_ID = Identifier.fromNamespaceAndPath(ModTemplate.MOD_ID, "duct");
 	public static final Identifier WIND_METER_ID = Identifier.fromNamespaceAndPath(ModTemplate.MOD_ID, "wind_meter");
+	public static final Identifier METEOROLOGICAL_MAP_ID = Identifier.fromNamespaceAndPath(ModTemplate.MOD_ID, "meteorological_map");
 	public static final Identifier WIND_TURBINE_PROBE_ID = Identifier.fromNamespaceAndPath(ModTemplate.MOD_ID, "wind_turbine_probe");
+	public static final Identifier WIND_VANE_ID = Identifier.fromNamespaceAndPath(ModTemplate.MOD_ID, "wind_vane");
 
 
 	//? neoforge {
 	public static final DeferredItem<Item> WIND_METER_ITEM = ITEMS.registerItem(WIND_METER_ID.getPath(),
 			properties -> new WindMeterItem(properties.stacksTo(1)));
+	public static final DeferredItem<Item> METEOROLOGICAL_MAP_ITEM = ITEMS.registerItem(METEOROLOGICAL_MAP_ID.getPath(),
+			properties -> new MeteorologicalMapItem(properties.stacksTo(1)));
 
 	public static final DeferredBlock<Block> FAN_BLOCK = registerBlock(FAN_ID.getPath(), properties -> new FanBlock(properties.strength(1.5f)));
 	public static final DeferredBlock<Block> DUCT_BLOCK = registerBlock(DUCT_ID.getPath(), properties -> new DuctBlock(properties.strength(1.0f)));
 	public static final DeferredBlock<Block> WIND_TURBINE_PROBE_BLOCK = registerBlock(WIND_TURBINE_PROBE_ID.getPath(), properties -> new WindTurbineProbeBlock(properties.strength(1.5f)));
+	public static final DeferredBlock<Block> WIND_VANE_BLOCK = registerBlock(WIND_VANE_ID.getPath(), properties -> new WindVaneBlock(properties.strength(0.8f).noOcclusion()));
 
 	public static final java.util.function.Supplier<BlockEntityType<FanBlockEntity>> FAN_BLOCK_ENTITY =
 			BLOCK_ENTITIES.register(FAN_ID.getPath(), () ->
@@ -69,17 +74,28 @@ public final class ModBlocks {
 					/*new BlockEntityType<>(WindTurbineProbeBlockEntity::new, java.util.Set.of(WIND_TURBINE_PROBE_BLOCK.get()), null)
 					*///?}
 			);
+	public static final java.util.function.Supplier<BlockEntityType<WindVaneBlockEntity>> WIND_VANE_BLOCK_ENTITY =
+			BLOCK_ENTITIES.register(WIND_VANE_ID.getPath(), () ->
+					//? >=1.21.11 {
+					new BlockEntityType<>(WindVaneBlockEntity::new, WIND_VANE_BLOCK.get())
+					//?} <1.21.11 {
+					/*new BlockEntityType<>(WindVaneBlockEntity::new, java.util.Set.of(WIND_VANE_BLOCK.get()), null)
+					*///?}
+			);
 	//?}
 
 	//? fabric {
 	/*public static Item WIND_METER_ITEM = register(WIND_METER_ID.getPath(), WindMeterItem::new, new Item.Properties().stacksTo(1));
+	public static Item METEOROLOGICAL_MAP_ITEM = register(METEOROLOGICAL_MAP_ID.getPath(), MeteorologicalMapItem::new, new Item.Properties().stacksTo(1));
 
 	public static Block FAN_BLOCK = register(FAN_ID.getPath(), FanBlock::new, Block.Properties.of().strength(1.5f), true);
 	public static Block DUCT_BLOCK = register(DUCT_ID.getPath(), DuctBlock::new, Block.Properties.of().strength(1.0f), true);
 	public static Block WIND_TURBINE_PROBE_BLOCK = register(WIND_TURBINE_PROBE_ID.getPath(), WindTurbineProbeBlock::new, Block.Properties.of().strength(1.5f), true);
+	public static Block WIND_VANE_BLOCK = register(WIND_VANE_ID.getPath(), WindVaneBlock::new, Block.Properties.of().strength(0.8f).noOcclusion(), true);
 
 	public static BlockEntityType<FanBlockEntity> FAN_BLOCK_ENTITY = register(FAN_ID.getPath(), FanBlockEntity::new, FAN_BLOCK);
 	public static BlockEntityType<WindTurbineProbeBlockEntity> WIND_TURBINE_PROBE_BLOCK_ENTITY = register(WIND_TURBINE_PROBE_ID.getPath(), WindTurbineProbeBlockEntity::new, WIND_TURBINE_PROBE_BLOCK);
+	public static BlockEntityType<WindVaneBlockEntity> WIND_VANE_BLOCK_ENTITY = register(WIND_VANE_ID.getPath(), WindVaneBlockEntity::new, WIND_VANE_BLOCK);
 	*///?}
 
 	//? fabric {
@@ -94,7 +110,9 @@ public final class ModBlocks {
 				output.accept(FAN_BLOCK);
 				output.accept(DUCT_BLOCK);
 				output.accept(WIND_METER_ITEM);
+				output.accept(METEOROLOGICAL_MAP_ITEM);
 				output.accept(WIND_TURBINE_PROBE_BLOCK);
+				output.accept(WIND_VANE_BLOCK);
 			})
 			.build();
 	*///?}
@@ -108,7 +126,9 @@ public final class ModBlocks {
 						output.accept(FAN_BLOCK.get());
 						output.accept(DUCT_BLOCK.get());
 						output.accept(WIND_METER_ITEM.get());
+						output.accept(METEOROLOGICAL_MAP_ITEM.get());
 						output.accept(WIND_TURBINE_PROBE_BLOCK.get());
+						output.accept(WIND_VANE_BLOCK.get());
 					})
 					.build()
 			);

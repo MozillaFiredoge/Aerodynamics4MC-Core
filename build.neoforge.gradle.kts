@@ -58,6 +58,7 @@ mixins {
 			"client.ParticleMixin"
 		)
 		minVersion("1.21.11", "client.LeavesParticleMixin")
+		minVersion("1.21.11", "client.WeatherEffectRendererMixin")
 	}
 }
 

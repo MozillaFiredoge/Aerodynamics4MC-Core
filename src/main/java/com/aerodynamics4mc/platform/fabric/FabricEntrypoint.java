@@ -6,6 +6,8 @@ package com.aerodynamics4mc.platform.fabric;
 import com.aerodynamics4mc.block.ModBlocks;
 import com.aerodynamics4mc.network.FabricCustomPayload;
 import com.aerodynamics4mc.network.packet.AeroClientL2PreferencePacket;
+import com.aerodynamics4mc.network.packet.AeroMesoscaleMapRequestPacket;
+import com.aerodynamics4mc.particle.ModParticles;
 import com.aerodynamics4mc.runtime.AeroCommands;
 import com.aerodynamics4mc.runtime.AeroServerRuntime;
 import com.github.razorplay.packet_handler.network.IPacket;
@@ -28,6 +30,7 @@ public class FabricEntrypoint implements ModInitializer {
 	public void onInitialize() {
 		ModTemplate.onInitialize();
 		ModBlocks.register();
+		ModParticles.register();
 		FabricCustomPayload.register();
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> AeroCommands.register(dispatcher));
@@ -52,6 +55,8 @@ public class FabricEntrypoint implements ModInitializer {
 					switch (packet) {
 						case AeroClientL2PreferencePacket pkt ->
 								runtime.setClientLocalL2Preference(context.player(), pkt.isLocalL2Enabled());
+						case AeroMesoscaleMapRequestPacket pkt ->
+								runtime.sendMeteorologicalMapToPlayer(context.player(), pkt.getLayer(), pkt.isOpenScreen());
 						default -> ModTemplate.LOGGER.info("Unknown client packet: {}", packet.getPacketId());
 					}
 				}));

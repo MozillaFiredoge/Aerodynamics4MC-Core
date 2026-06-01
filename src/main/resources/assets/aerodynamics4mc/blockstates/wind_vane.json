@@ -1,0 +1,8 @@
+{
+  "variants": {
+    "facing=north": { "model": "aerodynamics4mc:block/wind_vane" },
+    "facing=east": { "model": "aerodynamics4mc:block/wind_vane", "y": 90 },
+    "facing=south": { "model": "aerodynamics4mc:block/wind_vane", "y": 180 },
+    "facing=west": { "model": "aerodynamics4mc:block/wind_vane", "y": 270 }
+  }
+}

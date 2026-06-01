@@ -5,12 +5,19 @@ package com.aerodynamics4mc.platform.neoforge;
 import com.aerodynamics4mc.ModTemplate;
 import com.aerodynamics4mc.client.AeroClientCommands;
 import com.aerodynamics4mc.client.AeroClientMod;
+//? >=1.21.11 {
+import com.aerodynamics4mc.client.WindDriftParticle;
+import com.aerodynamics4mc.particle.ModParticles;
+//?}
 import net.minecraft.client.Minecraft;
 import net.minecraft.commands.Commands;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
+//? >=1.21.11 {
+import net.neoforged.neoforge.client.event.RegisterParticleProvidersEvent;
+//?}
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.common.NeoForge;
@@ -26,6 +33,18 @@ public class NeoforgeClientEventSubscriber {
 		registerClientEvents();
 	}
 
+	//? >=1.21.11 {
+	@SubscribeEvent
+	public static void registerParticleProviders(final RegisterParticleProvidersEvent event) {
+		event.registerSpriteSet(ModParticles.SAND_DUST.get(), WindDriftParticle.Provider::new);
+		event.registerSpriteSet(ModParticles.RED_SAND_DUST.get(), WindDriftParticle.Provider::new);
+		event.registerSpriteSet(ModParticles.DIRT_DUST.get(), WindDriftParticle.Provider::new);
+		event.registerSpriteSet(ModParticles.SNOW_DRIFT.get(), WindDriftParticle.Provider::new);
+		event.registerSpriteSet(ModParticles.LEAF_MOTE.get(), WindDriftParticle.Provider::new);
+		event.registerSpriteSet(ModParticles.GRASS_MOTE.get(), WindDriftParticle.Provider::new);
+	}
+	//?}
+
 	private static void registerClientEvents() {
 		// Client Tick
 		NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post event) -> {
@@ -33,6 +52,9 @@ public class NeoforgeClientEventSubscriber {
 			AeroClientMod.getInstance().getClientL2Solver().onClientTick(minecraft);
 			AeroClientMod.getInstance().getVisualizer().onClientTick();
 			AeroClientMod.getInstance().getIrisWindBridge().onClientTick(minecraft);
+			AeroClientMod.getInstance().getWindAmbienceManager().onClientTick(minecraft);
+			AeroClientMod.getInstance().getWindPresenceManager().onClientTick(minecraft);
+			AeroClientMod.getInstance().getGroundDustWindController().onClientTick(minecraft);
 		});
 
 		// Client Disconnect
@@ -41,6 +63,11 @@ public class NeoforgeClientEventSubscriber {
 				AeroClientMod.getInstance().getClientL2Solver().close();
 				AeroClientMod.getInstance().getVisualizer().clearState();
 				AeroClientMod.getInstance().getIrisWindBridge().clear();
+				AeroClientMod.getInstance().getWindAmbienceManager().clear();
+				AeroClientMod.getInstance().getWindPresenceManager().clear();
+				AeroClientMod.getInstance().getGroundDustWindController().clear();
+				AeroClientMod.getInstance().getMeteorologicalMapData().clear();
+				AeroClientMod.getInstance().getLocalWeatherData().clear();
 			}
 		});
 

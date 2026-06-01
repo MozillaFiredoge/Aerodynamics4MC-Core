@@ -1,0 +1,69 @@
+{
+  "textures": {
+    "metal": "minecraft:block/iron_block",
+    "tip": "minecraft:block/redstone_block",
+    "particle": "minecraft:block/iron_block"
+  },
+  "elements": [
+    {
+      "from": [7, 0, 7],
+      "to": [9, 13, 9],
+      "faces": {
+        "north": { "texture": "#metal" },
+        "east": { "texture": "#metal" },
+        "south": { "texture": "#metal" },
+        "west": { "texture": "#metal" },
+        "up": { "texture": "#metal" },
+        "down": { "texture": "#metal" }
+      }
+    },
+    {
+      "from": [7, 12, 2],
+      "to": [9, 14, 14],
+      "faces": {
+        "north": { "texture": "#metal" },
+        "east": { "texture": "#metal" },
+        "south": { "texture": "#metal" },
+        "west": { "texture": "#metal" },
+        "up": { "texture": "#metal" },
+        "down": { "texture": "#metal" }
+      }
+    },
+    {
+      "from": [5, 11, 1],
+      "to": [11, 15, 4],
+      "faces": {
+        "north": { "texture": "#tip" },
+        "east": { "texture": "#tip" },
+        "south": { "texture": "#tip" },
+        "west": { "texture": "#tip" },
+        "up": { "texture": "#tip" },
+        "down": { "texture": "#tip" }
+      }
+    },
+    {
+      "from": [6, 10, 12],
+      "to": [10, 16, 15],
+      "faces": {
+        "north": { "texture": "#metal" },
+        "east": { "texture": "#metal" },
+        "south": { "texture": "#metal" },
+        "west": { "texture": "#metal" },
+        "up": { "texture": "#metal" },
+        "down": { "texture": "#metal" }
+      }
+    },
+    {
+      "from": [5, 0, 5],
+      "to": [11, 2, 11],
+      "faces": {
+        "north": { "texture": "#metal" },
+        "east": { "texture": "#metal" },
+        "south": { "texture": "#metal" },
+        "west": { "texture": "#metal" },
+        "up": { "texture": "#metal" },
+        "down": { "texture": "#metal" }
+      }
+    }
+  ]
+}

@@ -2,12 +2,14 @@ package com.aerodynamics4mc.client;
 
 import com.aerodynamics4mc.api.SamplePolicy;
 import com.aerodynamics4mc.api.client.AeroClientWindApi;
+
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 
 public final class ParticleWindController {
     private static final double MIN_WIND_SPEED = 0.01;
+    private static final double METERS_PER_SECOND_TO_BLOCKS_PER_TICK = 1.0 / 20.0;
 
     private ParticleWindController() {}
 
@@ -48,6 +50,21 @@ public final class ParticleWindController {
         return new Vec3(next.x, vertical, next.z);
     }
 
+    public static Vec3 groundDustTargetVelocity(
+            ClientLevel world,
+            double x,
+            double y,
+            double z,
+            double windCoupling,
+            double maxHorizontalSpeed
+    ) {
+        Vec3 wind = sampleWind(world, x, y + 0.08, z);
+        if (wind.lengthSqr() < MIN_WIND_SPEED * MIN_WIND_SPEED) {
+            return Vec3.ZERO;
+        }
+        return horizontalWindVelocity(wind, windCoupling, maxHorizontalSpeed);
+    }
+
     private static Vec3 sampleWind(ClientLevel world, double x, double y, double z) {
         return AeroClientWindApi.sample(world, new Vec3(x, y, z), SamplePolicy.CLIENT_LOCAL_PREFERRED).effectiveVelocity();
     }
@@ -62,5 +79,17 @@ public final class ParticleWindController {
             nextZ *= scale;
         }
         return new Vec3(nextX, velocity.y, nextZ);
+    }
+
+    private static Vec3 horizontalWindVelocity(Vec3 wind, double windCoupling, double maxHorizontalSpeed) {
+        double targetX = wind.x * METERS_PER_SECOND_TO_BLOCKS_PER_TICK * windCoupling;
+        double targetZ = wind.z * METERS_PER_SECOND_TO_BLOCKS_PER_TICK * windCoupling;
+        double horizontalSpeed = Math.sqrt(targetX * targetX + targetZ * targetZ);
+        if (horizontalSpeed > maxHorizontalSpeed && horizontalSpeed > 1.0e-6) {
+            double scale = maxHorizontalSpeed / horizontalSpeed;
+            targetX *= scale;
+            targetZ *= scale;
+        }
+        return new Vec3(targetX, 0.0, targetZ);
     }
 }

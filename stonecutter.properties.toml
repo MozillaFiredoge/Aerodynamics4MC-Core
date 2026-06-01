@@ -1,8 +1,8 @@
 mod.id = "aerodynamics4mc"
 mod.name = "Aerodynamics4MC"
 mod.group = "com"
-mod.version = "0.1.1"
-mod.channel_tag = "-alpha.1"
+mod.version = "0.2"
+mod.channel_tag = ""
 mod.description = "Real-time aerodynamics capture and visualization."
 mod.authors = ["MozillaFiredoge"]
 mod.contributors = ["RazorPlay01"]

@@ -4,6 +4,7 @@ package com.aerodynamics4mc.platform.neoforge;
 
 import com.aerodynamics4mc.ModTemplate;
 import com.aerodynamics4mc.block.ModBlocks;
+import com.aerodynamics4mc.particle.ModParticles;
 import com.aerodynamics4mc.runtime.AeroCommands;
 import com.aerodynamics4mc.runtime.AeroServerRuntime;
 import net.minecraft.server.MinecraftServer;
@@ -30,6 +31,7 @@ public class NeoforgeEntrypoint {
 		ModTemplate.onInitialize();
 
 		ModBlocks.register(modEventBus);
+		ModParticles.register(modEventBus);
 
 		NeoForge.EVENT_BUS.addListener((RegisterCommandsEvent event) -> AeroCommands.register(event.getDispatcher()));
 		NeoForge.EVENT_BUS.addListener((ServerTickEvent.Post event) -> runtime.onServerTick(event.getServer()));

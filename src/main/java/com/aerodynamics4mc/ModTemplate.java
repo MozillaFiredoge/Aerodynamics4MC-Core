@@ -6,6 +6,9 @@ import com.aerodynamics4mc.network.packet.AeroClientL2PreferencePacket;
 import com.aerodynamics4mc.network.packet.AeroCoarseWindPacket;
 import com.aerodynamics4mc.network.packet.AeroFlowAnalysisPacket;
 import com.aerodynamics4mc.network.packet.AeroFlowPacket;
+import com.aerodynamics4mc.network.packet.AeroLocalWeatherPacket;
+import com.aerodynamics4mc.network.packet.AeroMesoscaleMapPacket;
+import com.aerodynamics4mc.network.packet.AeroMesoscaleMapRequestPacket;
 import com.aerodynamics4mc.network.packet.AeroRuntimeStatePacket;
 import com.aerodynamics4mc.platform.Platform;
 
@@ -65,7 +68,10 @@ public class ModTemplate {
 				AeroCoarseWindPacket.class,
 				AeroFlowAnalysisPacket.class,
 				AeroFlowPacket.class,
-				AeroRuntimeStatePacket.class
+				AeroRuntimeStatePacket.class,
+				AeroLocalWeatherPacket.class,
+				AeroMesoscaleMapPacket.class,
+				AeroMesoscaleMapRequestPacket.class
 		};
 		PacketTCP.registerPackets(packetClasses);
 		PacketTCP.setLoggingEnabled(false);

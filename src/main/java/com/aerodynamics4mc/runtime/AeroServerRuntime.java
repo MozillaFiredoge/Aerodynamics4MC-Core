@@ -10,6 +10,8 @@ import com.aerodynamics4mc.flow.AnalysisFlowCodec;
 import com.aerodynamics4mc.network.packet.AeroCoarseWindPacket;
 import com.aerodynamics4mc.network.packet.AeroFlowAnalysisPacket;
 import com.aerodynamics4mc.network.packet.AeroFlowPacket;
+import com.aerodynamics4mc.network.packet.AeroLocalWeatherPacket;
+import com.aerodynamics4mc.network.packet.AeroMesoscaleMapPacket;
 import com.aerodynamics4mc.network.packet.AeroRuntimeStatePacket;
 import lombok.Getter;
 import net.minecraft.commands.CommandSourceStack;
@@ -27,11 +29,13 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LightLayer;
+import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -127,6 +131,8 @@ public final class AeroServerRuntime {
 	public static final int COARSE_WIND_SYNC_SIZE_Y = 5;
 	public static final int COARSE_WIND_SYNC_SIZE_Z = 9;
 	public static final int COARSE_WIND_RESEND_INTERVAL_TICKS = TICKS_PER_SECOND;
+	public static final int LOCAL_WEATHER_RESEND_INTERVAL_TICKS = TICKS_PER_SECOND;
+	public static final int LOCAL_WEATHER_SERVER_STATE_MAX_AGE_TICKS = TICKS_PER_SECOND * 5;
 	public static final float ANALYSIS_FLOW_VELOCITY_TOLERANCE = 0.02f;
 	public static final float ANALYSIS_FLOW_PRESSURE_TOLERANCE = 0.0005f;
 	public static final int L2_CAPTURE_DEFAULT_DURATION_SECONDS = 30;
@@ -321,7 +327,9 @@ public final class AeroServerRuntime {
 	public final Map<WindowKey, Integer> solveWindowRetainUntilTick = new HashMap<>();
 	public final Map<UUID, PlayerMotionAnchorState> playerMotionAnchorStates = new HashMap<>();
 	public final Map<UUID, CoarseWindSyncState> lastCoarseWindSyncStates = new HashMap<>();
+	public final Map<UUID, LocalWeatherSyncState> lastLocalWeatherSyncStates = new HashMap<>();
 	public final Map<UUID, FlowAtlasSyncState> lastFlowAtlasSyncStates = new HashMap<>();
+	public final Map<ResourceKey<Level>, LocalWeatherServerState> localWeatherServerStates = new HashMap<>();
 	public final Set<UUID> clientLocalL2Players = ConcurrentHashMap.newKeySet();
 	public final Map<WindowKey, Integer> zeroAtlasHoldUntilTick = new HashMap<>();
 	public final Set<WindowKey> mirrorOnlyPrewarmedWindowKeys = new HashSet<>();
@@ -436,6 +444,7 @@ public final class AeroServerRuntime {
 		clientLocalL2Players.remove(playerId);
 		playerMotionAnchorStates.remove(playerId);
 		lastCoarseWindSyncStates.remove(playerId);
+		lastLocalWeatherSyncStates.remove(playerId);
 		lastFlowAtlasSyncStates.remove(playerId);
 	}
 
@@ -734,6 +743,7 @@ public final class AeroServerRuntime {
 			}
 			pendingNestedFeedbackBins.remove(world.dimension());
 			nestedFeedbackRuntimeDiagnostics.remove(world.dimension());
+			localWeatherServerStates.remove(world.dimension());
 			synchronized (simulationStateLock) {
 				brickRuntimeHintWorldKeys.remove(world.dimension());
 				brickRuntimeKnownWorldKeys.remove(world.dimension());
@@ -1524,6 +1534,7 @@ public final class AeroServerRuntime {
 			if (shouldSyncCoarseFlow) {
 				phaseStartNanos = System.nanoTime();
 				syncCoarseWindToPlayers(server);
+				syncLocalWeatherToPlayers(server);
 				recordMainThreadPhase(MAIN_THREAD_PHASE_FLOW_SYNC, System.nanoTime() - phaseStartNanos);
 			} else {
 				recordMainThreadPhase(MAIN_THREAD_PHASE_FLOW_SYNC, 0L);
@@ -1537,6 +1548,7 @@ public final class AeroServerRuntime {
 		phaseStartNanos = System.nanoTime();
 		if (shouldSyncCoarseFlow) {
 			syncCoarseWindToPlayers(server);
+			syncLocalWeatherToPlayers(server);
 		}
 		if (SERVER_L2_ATLAS_STREAMING_ENABLED) {
 			syncPublishedFlowToPlayers(server, frame);
@@ -1666,6 +1678,7 @@ public final class AeroServerRuntime {
 			grid.close();
 		}
 		mesoscaleMetGrids.clear();
+		localWeatherServerStates.clear();
 		pendingNestedFeedbackBins.clear();
 		nestedFeedbackRuntimeDiagnostics.clear();
 		desiredWindowKeys = Set.of();
@@ -1676,7 +1689,9 @@ public final class AeroServerRuntime {
 		solveWindowRetainUntilTick.clear();
 		playerMotionAnchorStates.clear();
 		lastCoarseWindSyncStates.clear();
+		lastLocalWeatherSyncStates.clear();
 		lastFlowAtlasSyncStates.clear();
+		localWeatherServerStates.clear();
 		zeroAtlasHoldUntilTick.clear();
 		mirrorOnlyPrewarmedWindowKeys.clear();
 		mirrorOnlyUploadedBrickStaticSignatures.clear();
@@ -2076,7 +2091,9 @@ public final class AeroServerRuntime {
 		resetMainThreadProfiling();
 		lastSyncedFlowFrameId = 0L;
 		lastCoarseWindSyncStates.clear();
+		lastLocalWeatherSyncStates.clear();
 		lastFlowAtlasSyncStates.clear();
+		localWeatherServerStates.clear();
 		zeroAtlasHoldUntilTick.clear();
 		lastSolverError = "";
 		lastCoordinatorError = "";
@@ -5907,13 +5924,14 @@ public final class AeroServerRuntime {
 					AeroWindSample.UNKNOWN_EPOCH
 			);
 			float turbulence = l1TurbulenceIntensity(mesoscaleSample, horizontalSpeed);
+			float gustPotential = l1GustPotential(mesoscaleSample, horizontalSpeed, turbulence);
 			return sample.withAtmosphere(
 					mesoscaleSample.ambientAirTemperatureKelvin(),
 					mesoscaleSample.humidity(),
 					turbulence,
-					gustComponent(probePos, tickCounter, 0, turbulence),
-					gustComponent(probePos, tickCounter, 1, turbulence) * 0.35f,
-					gustComponent(probePos, tickCounter, 2, turbulence),
+					l1GustComponent(probePos, tickCounter, 0, mesoscaleSample.windX(), mesoscaleSample.windZ(), gustPotential, turbulence),
+					l1GustComponent(probePos, tickCounter, 1, mesoscaleSample.windX(), mesoscaleSample.windZ(), gustPotential, turbulence),
+					l1GustComponent(probePos, tickCounter, 2, mesoscaleSample.windX(), mesoscaleSample.windZ(), gustPotential, turbulence),
 					mesoscaleSample.windShearXPerBlock(),
 					mesoscaleSample.windShearZPerBlock(),
 					mesoscaleSample.ablStability(),
@@ -5982,6 +6000,29 @@ public final class AeroServerRuntime {
 		);
 	}
 
+	private float l1GustPotential(MesoscaleGrid.Sample sample, float horizontalSpeed, float turbulenceIntensity) {
+		if (sample == null) {
+			return 0.0f;
+		}
+		float mixing = Mth.clamp(sample.ablMixingStrength(), 0.0f, 1.0f);
+		float profile = Mth.clamp(sample.ablProfileBlend(), 0.0f, 1.0f);
+		float shear = (float) Math.sqrt(
+				sample.windShearXPerBlock() * sample.windShearXPerBlock()
+						+ sample.windShearZPerBlock() * sample.windShearZPerBlock()
+		);
+		float shearBoost = Mth.clamp(shear * 48.0f, 0.0f, 1.0f);
+		float exposed = Mth.clamp(profile + mixing * 0.55f, 0.0f, 1.0f);
+		return Mth.clamp(
+				1.10f
+						+ horizontalSpeed * 0.34f
+						+ turbulenceIntensity * 0.42f
+						+ exposed * 0.70f
+						+ shearBoost * 0.45f,
+				1.25f,
+				3.80f
+		);
+	}
+
 	private float l0TurbulenceIntensity(BackgroundMetGrid.Sample sample, float horizontalSpeed) {
 		if (sample == null) {
 			return 0.0f;
@@ -6005,6 +6046,62 @@ public final class AeroServerRuntime {
 		double phaseB = pos.getX() * 0.017 - pos.getY() * 0.047 + pos.getZ() * 0.029 + time * 0.43 + axis * 3.19;
 		double gust = Math.sin(phaseA) * 0.62 + Math.sin(phaseB) * 0.38;
 		return (float) (gust * turbulenceIntensity * 0.42);
+	}
+
+	private float l1GustComponent(
+			BlockPos pos,
+			long tick,
+			int axis,
+			float meanWindX,
+			float meanWindZ,
+			float gustPotential,
+			float turbulenceIntensity
+	) {
+		if (!(gustPotential > 0.0f) || !Float.isFinite(gustPotential)) {
+			return 0.0f;
+		}
+		float speed = windSpeed(meanWindX, meanWindZ);
+		float dirX;
+		float dirZ;
+		if (speed > 0.20f) {
+			dirX = meanWindX / speed;
+			dirZ = meanWindZ / speed;
+		} else {
+			double fallbackAngle = pseudoAngle(pos);
+			dirX = (float) Math.cos(fallbackAngle);
+			dirZ = (float) Math.sin(fallbackAngle);
+		}
+
+		double timeSeconds = tick * SOLVER_STEP_SECONDS;
+		double along = pos.getX() * dirX + pos.getZ() * dirZ;
+		double cross = -pos.getX() * dirZ + pos.getZ() * dirX;
+		double bandA = Math.sin(along * 0.018 - timeSeconds * 0.42 + cross * 0.003);
+		double bandB = Math.sin(along * 0.041 - timeSeconds * 0.95 + cross * 0.011 + 2.13);
+		double positiveBand = Math.max(0.0, bandA * 0.68 + bandB * 0.32);
+		double pulse = 0.28 + 0.72 * Math.pow(positiveBand, 1.35);
+		double alongGust = pulse * gustPotential;
+		double lateralPhase = pos.getX() * 0.013 - pos.getZ() * 0.021 + timeSeconds * 0.67 + 1.71;
+		double lateral = Math.sin(lateralPhase)
+				* gustPotential
+				* (0.10 + 0.14 * Mth.clamp(turbulenceIntensity / 3.0f, 0.0f, 1.0f));
+		if (axis == 0) {
+			return (float) (dirX * alongGust - dirZ * lateral);
+		}
+		if (axis == 2) {
+			return (float) (dirZ * alongGust + dirX * lateral);
+		}
+		double verticalPhase = pos.getX() * 0.019 + pos.getY() * 0.037 - pos.getZ() * 0.016 + timeSeconds * 0.58;
+		return (float) (Math.sin(verticalPhase) * Math.min(0.45f, gustPotential * 0.12f));
+	}
+
+	private static double pseudoAngle(BlockPos pos) {
+		long value = pos.asLong() ^ 0x9E3779B97F4A7C15L;
+		value ^= value >>> 33;
+		value *= 0xff51afd7ed558ccdL;
+		value ^= value >>> 33;
+		value *= 0xc4ceb9fe1a85ec53L;
+		value ^= value >>> 33;
+		return ((value >>> 11) * 0x1.0p-53) * Math.PI * 2.0;
 	}
 
 	private SampledPoint sampleCoarsePointLocked(ResourceKey<Level> worldKey, BlockPos probePos) {
@@ -6238,6 +6335,7 @@ public final class AeroServerRuntime {
 
 	public void sendFlowSnapshotToPlayer(ServerPlayer player, MinecraftServer server) {
 		sendCoarseWindSnapshotToPlayer(player);
+		sendLocalWeatherSnapshotToPlayer(player);
 
 		if (!SERVER_L2_ATLAS_STREAMING_ENABLED) {
 			return;
@@ -6269,6 +6367,143 @@ public final class AeroServerRuntime {
 		}
 	}
 
+	public void sendMeteorologicalMapToPlayer(ServerPlayer player, int requestedLayer, boolean openScreen) {
+		if (player == null || !(player.level() instanceof ServerLevel world)) {
+			return;
+		}
+
+		MesoscaleGrid grid;
+		synchronized (simulationStateLock) {
+			grid = mesoscaleMetGrids.get(world.dimension());
+		}
+		if (grid == null) {
+			if (openScreen) {
+				player.displayClientMessage(Component.translatable("message.aerodynamics4mc.meteorological_map.no_grid"), false);
+			}
+			return;
+		}
+
+		MesoscaleGrid.Snapshot snapshot = grid.snapshot();
+		if (snapshot.gridWidth() <= 0 || snapshot.activeLayers() <= 0) {
+			if (openScreen) {
+				player.displayClientMessage(Component.translatable("message.aerodynamics4mc.meteorological_map.no_grid"), false);
+			}
+			return;
+		}
+
+		int layer = requestedLayer >= 0
+				? requestedLayer
+				: Math.floorDiv(player.blockPosition().getY() - snapshot.verticalBaseY(), snapshot.layerHeightBlocks());
+		layer = Mth.clamp(layer, 0, snapshot.activeLayers() - 1);
+
+		short[] packedLayer = buildMeteorologicalMapLayer(snapshot, layer);
+		AeroMesoscaleMapPacket payload = new AeroMesoscaleMapPacket(
+				world.dimension().identifier(),
+				snapshot.gridWidth(),
+				snapshot.activeLayers(),
+				layer,
+				snapshot.cellSizeBlocks(),
+				snapshot.layerHeightBlocks(),
+				snapshot.radiusCells(),
+				snapshot.centerCellX(),
+				snapshot.centerCellZ(),
+				snapshot.verticalBaseY(),
+				Math.floorDiv(player.blockPosition().getX(), snapshot.cellSizeBlocks()),
+				Math.floorDiv(player.blockPosition().getZ(), snapshot.cellSizeBlocks()),
+				snapshot.lastTickProcessed(),
+				openScreen,
+				packedLayer
+		);
+		ModTemplate.xplat().sendPacketToClient(payload, player);
+	}
+
+	private short[] buildMeteorologicalMapLayer(MesoscaleGrid.Snapshot snapshot, int layer) {
+		int gridWidth = snapshot.gridWidth();
+		short[] packed = new short[gridWidth * gridWidth * AeroMesoscaleMapPacket.CHANNEL_COUNT];
+		for (int localX = 0; localX < gridWidth; localX++) {
+			for (int localZ = 0; localZ < gridWidth; localZ++) {
+				int stateIndex = mesoscaleSnapshotIndex(localX, layer, localZ, gridWidth, snapshot.activeLayers());
+				int columnIndex = localX * gridWidth + localZ;
+				int dstBase = columnIndex * AeroMesoscaleMapPacket.CHANNEL_COUNT;
+				packed[dstBase + AeroMesoscaleMapPacket.CH_WIND_X] = quantizeSignedToShort(
+						snapshot.windX()[stateIndex],
+						AeroMesoscaleMapPacket.HORIZONTAL_WIND_RANGE_MPS
+				);
+				packed[dstBase + AeroMesoscaleMapPacket.CH_WIND_Y] = quantizeSignedToShort(
+						snapshot.windY()[stateIndex],
+						AeroMesoscaleMapPacket.VERTICAL_WIND_RANGE_MPS
+				);
+				packed[dstBase + AeroMesoscaleMapPacket.CH_WIND_Z] = quantizeSignedToShort(
+						snapshot.windZ()[stateIndex],
+						AeroMesoscaleMapPacket.HORIZONTAL_WIND_RANGE_MPS
+				);
+				packed[dstBase + AeroMesoscaleMapPacket.CH_SURFACE_WIND_X] = quantizeSignedToShort(
+						snapshot.forcingSurfaceWindX()[stateIndex],
+						AeroMesoscaleMapPacket.HORIZONTAL_WIND_RANGE_MPS
+				);
+				packed[dstBase + AeroMesoscaleMapPacket.CH_SURFACE_WIND_Z] = quantizeSignedToShort(
+						snapshot.forcingSurfaceWindZ()[stateIndex],
+						AeroMesoscaleMapPacket.HORIZONTAL_WIND_RANGE_MPS
+				);
+				packed[dstBase + AeroMesoscaleMapPacket.CH_GEOSTROPHIC_WIND_X] = quantizeSignedToShort(
+						snapshot.forcingGeostrophicWindX()[stateIndex],
+						AeroMesoscaleMapPacket.HORIZONTAL_WIND_RANGE_MPS
+				);
+				packed[dstBase + AeroMesoscaleMapPacket.CH_GEOSTROPHIC_WIND_Z] = quantizeSignedToShort(
+						snapshot.forcingGeostrophicWindZ()[stateIndex],
+						AeroMesoscaleMapPacket.HORIZONTAL_WIND_RANGE_MPS
+				);
+				packed[dstBase + AeroMesoscaleMapPacket.CH_HUMIDITY] = quantizeUnitToShort(snapshot.humidity()[stateIndex]);
+				packed[dstBase + AeroMesoscaleMapPacket.CH_INSTABILITY] = quantizeSignedToShort(
+						snapshot.instabilityProxy()[stateIndex],
+						AeroMesoscaleMapPacket.DIAGNOSTIC_RANGE
+				);
+				packed[dstBase + AeroMesoscaleMapPacket.CH_LOW_LEVEL_SHEAR] = quantizeUnsignedRangeToShort(
+						snapshot.lowLevelShear()[stateIndex],
+						AeroMesoscaleMapPacket.SHEAR_RANGE
+				);
+				packed[dstBase + AeroMesoscaleMapPacket.CH_MOISTURE_CONVERGENCE] = quantizeSignedToShort(
+						snapshot.moistureConvergence()[stateIndex],
+						AeroMesoscaleMapPacket.DIAGNOSTIC_RANGE
+				);
+				packed[dstBase + AeroMesoscaleMapPacket.CH_LIFT] = quantizeSignedToShort(
+						snapshot.liftProxy()[stateIndex],
+						AeroMesoscaleMapPacket.DIAGNOSTIC_RANGE
+				);
+				packed[dstBase + AeroMesoscaleMapPacket.CH_ABL_AGL_HEIGHT] = quantizeUnsignedRangeToShort(
+						snapshot.ablHeightAglBlocks()[stateIndex],
+						AeroMesoscaleMapPacket.ABL_HEIGHT_RANGE_BLOCKS
+				);
+				packed[dstBase + AeroMesoscaleMapPacket.CH_ABL_STABILITY] = quantizeSignedToShort(
+						snapshot.ablStability()[stateIndex],
+						1.0f
+				);
+				packed[dstBase + AeroMesoscaleMapPacket.CH_ABL_MIXING] = quantizeUnitToShort(snapshot.ablMixingStrength()[stateIndex]);
+				packed[dstBase + AeroMesoscaleMapPacket.CH_TERRAIN_SOLID] = quantizeUnitToShort(snapshot.terrainSolidMask()[stateIndex]);
+				packed[dstBase + AeroMesoscaleMapPacket.CH_SURFACE_CLASS] = (short) (snapshot.surfaceClass()[columnIndex] & 0xFF);
+			}
+		}
+		return packed;
+	}
+
+	private int mesoscaleSnapshotIndex(int localX, int layer, int localZ, int gridWidth, int activeLayers) {
+		int columnIndex = localX * gridWidth + localZ;
+		return columnIndex * activeLayers + layer;
+	}
+
+	private short quantizeUnitToShort(float value) {
+		float unit = Mth.clamp(finiteOrDefault(value, 0.0f), 0.0f, 1.0f);
+		return quantizeSignedToShort(unit * 2.0f - 1.0f, 1.0f);
+	}
+
+	private short quantizeUnsignedRangeToShort(float value, float range) {
+		if (!(range > 0.0f)) {
+			return 0;
+		}
+		float unit = Mth.clamp(finiteOrDefault(value, 0.0f) / range, 0.0f, 1.0f);
+		return quantizeSignedToShort(unit * 2.0f - 1.0f, 1.0f);
+	}
+
 	private void sendCoarseWindSnapshotToPlayer(ServerPlayer player) {
 		CoarseWindSyncState state = coarseWindSyncStateForPlayer(player);
 		AeroCoarseWindPacket payload = buildCoarseWindPayloadForPlayer(player, state);
@@ -6276,6 +6511,79 @@ public final class AeroServerRuntime {
 			ModTemplate.xplat().sendPacketToClient(payload, player);
 			lastCoarseWindSyncStates.put(player.getUUID(), state);
 		}
+	}
+
+	private void sendLocalWeatherSnapshotToPlayer(ServerPlayer player) {
+		AeroLocalWeatherPacket payload = buildLocalWeatherPayloadForPlayer(player);
+		if (payload != null) {
+			ModTemplate.xplat().sendPacketToClient(payload, player);
+			lastLocalWeatherSyncStates.put(player.getUUID(), localWeatherSyncStateFor(player, payload));
+		}
+	}
+
+	public Biome.Precipitation localPrecipitationAt(ServerLevel world, BlockPos pos) {
+		if (world == null || pos == null || !streamingEnabled) {
+			return null;
+		}
+		//? >=1.21.11 {
+		if (!world.canHaveWeather()) {
+			return null;
+		}
+		//?}
+		LocalWeatherServerState state = localWeatherStateFor(world);
+		if (state == null || !state.covers(pos)) {
+			return null;
+		}
+
+		if (!world.canSeeSky(pos)) {
+			return Biome.Precipitation.NONE;
+		}
+		if (world.getHeightmapPos(Heightmap.Types.MOTION_BLOCKING, pos).getY() > pos.getY()) {
+			return Biome.Precipitation.NONE;
+		}
+		Biome.Precipitation biomePrecipitation;
+		//? >=1.21.11 {
+		biomePrecipitation = world.getBiome(pos).value().getPrecipitationAt(pos, world.getSeaLevel());
+		//?} <1.21.11 {
+		/*biomePrecipitation = world.getBiome(pos).value().getPrecipitationAt(pos);
+		*///?}
+		if (biomePrecipitation == Biome.Precipitation.NONE) {
+			return Biome.Precipitation.NONE;
+		}
+
+		float precipitation = state.sample(pos.getX(), pos.getZ(), AeroLocalWeatherPacket.CH_PRECIPITATION);
+		if (precipitation < LocalWeatherServerState.MIN_GAMEPLAY_PRECIPITATION) {
+			return Biome.Precipitation.NONE;
+		}
+		float snowFraction = state.sample(pos.getX(), pos.getZ(), AeroLocalWeatherPacket.CH_SNOW_FRACTION);
+		return snowFraction > 0.52f ? Biome.Precipitation.SNOW : Biome.Precipitation.RAIN;
+	}
+
+	private LocalWeatherServerState localWeatherStateFor(ServerLevel world) {
+		ResourceKey<Level> worldKey = world.dimension();
+		LocalWeatherServerState cached = localWeatherServerStates.get(worldKey);
+		if (cached != null && tickCounter - cached.runtimeTick() <= LOCAL_WEATHER_SERVER_STATE_MAX_AGE_TICKS) {
+			return cached;
+		}
+
+		MesoscaleGrid grid;
+		synchronized (simulationStateLock) {
+			grid = mesoscaleMetGrids.get(worldKey);
+		}
+		if (grid == null) {
+			return null;
+		}
+		MesoscaleGrid.Snapshot snapshot = grid.snapshot();
+		if (snapshot.gridWidth() <= 0 || snapshot.activeLayers() <= 0) {
+			return null;
+		}
+		AeroLocalWeatherPacket payload = LocalWeatherGrid.buildPacket(world.dimension().identifier(), snapshot);
+		if (payload == null) {
+			return null;
+		}
+		LocalWeatherServerState next = new LocalWeatherServerState(worldKey, payload, tickCounter);
+		localWeatherServerStates.put(worldKey, next);
+		return next;
 	}
 
 	public void waitForSolverIdle() {
@@ -6497,6 +6805,60 @@ public final class AeroServerRuntime {
 			}
 		}
 		lastCoarseWindSyncStates.keySet().retainAll(observedPlayers);
+	}
+
+	private void syncLocalWeatherToPlayers(MinecraftServer server) {
+		Set<UUID> observedPlayers = new HashSet<>();
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			observedPlayers.add(player.getUUID());
+			AeroLocalWeatherPacket payload = buildLocalWeatherPayloadForPlayer(player);
+			if (payload == null) {
+				continue;
+			}
+			LocalWeatherSyncState state = localWeatherSyncStateFor(player, payload);
+			LocalWeatherSyncState previous = lastLocalWeatherSyncStates.get(player.getUUID());
+			if (previous != null
+					&& previous.sameSnapshot(state)
+					&& tickCounter - previous.tick() < LOCAL_WEATHER_RESEND_INTERVAL_TICKS) {
+				continue;
+			}
+			ModTemplate.xplat().sendPacketToClient(payload, player);
+			lastLocalWeatherSyncStates.put(player.getUUID(), state);
+		}
+		lastLocalWeatherSyncStates.keySet().retainAll(observedPlayers);
+	}
+
+	private AeroLocalWeatherPacket buildLocalWeatherPayloadForPlayer(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel world)) {
+			return null;
+		}
+		MesoscaleGrid grid;
+		synchronized (simulationStateLock) {
+			grid = mesoscaleMetGrids.get(world.dimension());
+		}
+		if (grid == null) {
+			return null;
+		}
+		MesoscaleGrid.Snapshot snapshot = grid.snapshot();
+		if (snapshot.gridWidth() <= 0 || snapshot.activeLayers() <= 0) {
+			return null;
+		}
+		AeroLocalWeatherPacket payload = LocalWeatherGrid.buildPacket(world.dimension().identifier(), snapshot);
+		if (payload != null) {
+			localWeatherServerStates.put(world.dimension(), new LocalWeatherServerState(world.dimension(), payload, tickCounter));
+		}
+		return payload;
+	}
+
+	private LocalWeatherSyncState localWeatherSyncStateFor(ServerPlayer player, AeroLocalWeatherPacket payload) {
+		ServerLevel world = (ServerLevel) player.level();
+		return new LocalWeatherSyncState(
+				world.dimension(),
+				payload.getCenterCellX(),
+				payload.getCenterCellZ(),
+				payload.getServerTick(),
+				tickCounter
+		);
 	}
 
 	private CoarseWindSyncState coarseWindSyncStateForPlayer(ServerPlayer player) {
@@ -7104,6 +7466,86 @@ public final class AeroServerRuntime {
 					&& originX == other.originX()
 					&& originY == other.originY()
 					&& originZ == other.originZ();
+		}
+	}
+
+	private record LocalWeatherSyncState(
+			ResourceKey<Level> worldKey,
+			int centerCellX,
+			int centerCellZ,
+			long serverTick,
+			int tick
+	) {
+		boolean sameSnapshot(LocalWeatherSyncState other) {
+			return other != null
+					&& worldKey.equals(other.worldKey())
+					&& centerCellX == other.centerCellX()
+					&& centerCellZ == other.centerCellZ()
+					&& serverTick == other.serverTick();
+		}
+	}
+
+	private record LocalWeatherServerState(
+			ResourceKey<Level> worldKey,
+			AeroLocalWeatherPacket packet,
+			int runtimeTick
+	) {
+		private static final float MIN_GAMEPLAY_PRECIPITATION = 0.055f;
+
+		boolean covers(BlockPos pos) {
+			if (pos == null || packet == null || packet.getGridWidth() <= 0 || packet.getCellSizeBlocks() <= 0) {
+				return false;
+			}
+			float gridX = gridCoordinate(pos.getX());
+			float gridZ = gridCoordinate(pos.getZ());
+			float min = -0.5f;
+			float max = packet.getGridWidth() - 0.5f;
+			return gridX >= min && gridX <= max && gridZ >= min && gridZ <= max;
+		}
+
+		float sample(int blockX, int blockZ, int channel) {
+			if (packet == null || channel < 0 || channel >= AeroLocalWeatherPacket.CHANNEL_COUNT) {
+				return 0.0f;
+			}
+			short[] packed = packet.getPackedWeather();
+			int gridWidth = packet.getGridWidth();
+			if (packed == null || gridWidth <= 0 || packed.length != gridWidth * gridWidth * AeroLocalWeatherPacket.CHANNEL_COUNT) {
+				return 0.0f;
+			}
+			float gridX = gridCoordinate(blockX);
+			float gridZ = gridCoordinate(blockZ);
+			int x0 = Mth.floor(gridX);
+			int z0 = Mth.floor(gridZ);
+			float tx = gridX - x0;
+			float tz = gridZ - z0;
+			int x1 = x0 + 1;
+			int z1 = z0 + 1;
+
+			float v00 = channelAt(clampIndex(x0, gridWidth), clampIndex(z0, gridWidth), channel);
+			float v10 = channelAt(clampIndex(x1, gridWidth), clampIndex(z0, gridWidth), channel);
+			float v01 = channelAt(clampIndex(x0, gridWidth), clampIndex(z1, gridWidth), channel);
+			float v11 = channelAt(clampIndex(x1, gridWidth), clampIndex(z1, gridWidth), channel);
+			float vx0 = Mth.lerp(tx, v00, v10);
+			float vx1 = Mth.lerp(tx, v01, v11);
+			return Mth.clamp(Mth.lerp(tz, vx0, vx1), 0.0f, 1.0f);
+		}
+
+		private float gridCoordinate(int blockCoordinate) {
+			return (float) (blockCoordinate / (double) packet.getCellSizeBlocks() - packet.getOriginCellX() - 0.5);
+		}
+
+		private float channelAt(int localX, int localZ, int channel) {
+			int index = (localX * packet.getGridWidth() + localZ) * AeroLocalWeatherPacket.CHANNEL_COUNT + channel;
+			short[] packed = packet.getPackedWeather();
+			if (index < 0 || packed == null || index >= packed.length) {
+				return 0.0f;
+			}
+			float signed = packed[index] / (float) Short.MAX_VALUE;
+			return Mth.clamp(signed * 0.5f + 0.5f, 0.0f, 1.0f);
+		}
+
+		private int clampIndex(int index, int size) {
+			return Mth.clamp(index, 0, Math.max(0, size - 1));
 		}
 	}
 

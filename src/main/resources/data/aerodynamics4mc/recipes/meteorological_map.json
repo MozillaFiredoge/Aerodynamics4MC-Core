@@ -1,0 +1,21 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "tools",
+  "pattern": [
+    "PPP",
+    "PWP",
+    "PPP"
+  ],
+  "key": {
+    "P": {
+      "item": "minecraft:paper"
+    },
+    "W": {
+      "item": "aerodynamics4mc:wind_meter"
+    }
+  },
+  "result": {
+    "item": "aerodynamics4mc:meteorological_map",
+    "count": 1
+  }
+}

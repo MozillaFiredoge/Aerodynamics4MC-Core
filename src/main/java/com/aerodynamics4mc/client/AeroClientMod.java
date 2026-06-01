@@ -7,6 +7,8 @@ import com.aerodynamics4mc.network.packet.AeroClientL2PreferencePacket;
 import com.aerodynamics4mc.network.packet.AeroCoarseWindPacket;
 import com.aerodynamics4mc.network.packet.AeroFlowAnalysisPacket;
 import com.aerodynamics4mc.network.packet.AeroFlowPacket;
+import com.aerodynamics4mc.network.packet.AeroLocalWeatherPacket;
+import com.aerodynamics4mc.network.packet.AeroMesoscaleMapPacket;
 import com.aerodynamics4mc.network.packet.AeroRuntimeStatePacket;
 import lombok.Getter;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -26,6 +28,11 @@ public final class AeroClientMod {
 	private static AeroClientMod instance = null;
 	private final AeroVisualizer visualizer = new AeroVisualizer();
 	private final IrisWindBridge irisWindBridge = new IrisWindBridge(visualizer);
+	private final ClientWindAmbienceManager windAmbienceManager = new ClientWindAmbienceManager();
+	private final ClientWindPresenceManager windPresenceManager = new ClientWindPresenceManager();
+	private final GroundDustWindController groundDustWindController = new GroundDustWindController();
+	private final ClientMeteorologicalMapData meteorologicalMapData = new ClientMeteorologicalMapData();
+	private final ClientLocalWeatherData localWeatherData = new ClientLocalWeatherData();
 	public final ClientL2Solver clientL2Solver = new ClientL2Solver(visualizer);
 
 	private AeroClientMod() {
@@ -86,6 +93,30 @@ public final class AeroClientMod {
 	public static void onFlowAnalysis(AeroFlowAnalysisPacket packet, /*? fabric{ */ /*ClientPlayNetworking.Context *//*?} neoforge{ */ IPayloadContext /*?} */ context) {
 		context./*? fabric{ */ /*client().execute *//*?} neoforge{ */ enqueueWork /*?} */
 		(() -> getInstance().getVisualizer().onFlowAnalysis(packet));
+	}
+
+	public static void onMesoscaleMap(AeroMesoscaleMapPacket packet, /*? fabric{ */ /*ClientPlayNetworking.Context *//*?} neoforge{ */ IPayloadContext /*?} */ context) {
+		context./*? fabric{ */ /*client().execute *//*?} neoforge{ */ enqueueWork /*?} */
+		(() -> {
+			AeroClientMod client = getInstance();
+			client.getMeteorologicalMapData().update(packet);
+			if (packet.isOpenScreen()) {
+				client.openMeteorologicalMapScreen();
+			}
+		});
+	}
+
+	public static void onLocalWeather(AeroLocalWeatherPacket packet, /*? fabric{ */ /*ClientPlayNetworking.Context *//*?} neoforge{ */ IPayloadContext /*?} */ context) {
+		context./*? fabric{ */ /*client().execute *//*?} neoforge{ */ enqueueWork /*?} */
+		(() -> getInstance().getLocalWeatherData().update(packet));
+	}
+
+	private void openMeteorologicalMapScreen() {
+		net.minecraft.client.Minecraft minecraft = net.minecraft.client.Minecraft.getInstance();
+		if (minecraft.screen instanceof MeteorologicalMapScreen) {
+			return;
+		}
+		minecraft.setScreen(new MeteorologicalMapScreen(meteorologicalMapData));
 	}
 
 	// ====================== Static API ======================
