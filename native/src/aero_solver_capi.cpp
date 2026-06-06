@@ -1,6 +1,7 @@
 #include "aero_solver_capi.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -39,29 +40,90 @@ struct SolverContext {
     long long context_key = 0;
     AeroGridDesc grid{};
     int cells = 0;
+    bool owns_runtime_lock = false;
     bool custom_flow_state = false;
     bool packet_dirty = true;
     bool native_payload_uploaded = false;
     AeroBoundaryDesc packet_boundary{};
+    AeroBoundaryDesc force_boundary{};
     std::vector<uint8_t> solid_mask;
     std::vector<float> packet;
 };
 
-std::mutex g_solver_mutex;
-std::unordered_map<long long, std::unique_ptr<SolverContext>> g_contexts;
-long long g_next_handle = 1;
-std::string g_last_error;
+struct SolverSpinMutex {
+    std::atomic_flag flag = ATOMIC_FLAG_INIT;
+
+    void lock() noexcept {
+        while (flag.test_and_set(std::memory_order_acquire)) {
+        }
+    }
+
+    void unlock() noexcept {
+        flag.clear(std::memory_order_release);
+    }
+};
+
+struct SolverGlobals {
+    SolverSpinMutex mutex;
+    std::unordered_map<long long, std::unique_ptr<SolverContext>> contexts;
+    long long next_handle = 1;
+    std::string last_error;
+};
+
+SolverGlobals& solver_globals() {
+    static SolverGlobals* globals = new SolverGlobals();
+    return *globals;
+}
 
 void set_error(const char* message) {
-    g_last_error = message ? message : "unknown solver error";
+    solver_globals().last_error = message ? message : "unknown solver error";
 }
 
 void set_error(const std::string& message) {
-    g_last_error = message;
+    solver_globals().last_error = message;
 }
 
 void clear_error() {
-    g_last_error.clear();
+    solver_globals().last_error.clear();
+}
+
+void force_distribution_readback_solver_mode() {
+    aero_lbm_set_realtime_solver_mode(AERO_LBM_REALTIME_SOLVER_CLASSIC_D3Q27);
+}
+
+struct ScopedRuntimeLock {
+    bool locked = false;
+
+    ScopedRuntimeLock() : locked(true) {
+        aero_lbm_runtime_lock();
+    }
+
+    ~ScopedRuntimeLock() {
+        if (locked) {
+            aero_lbm_runtime_unlock();
+        }
+    }
+
+    void transfer() {
+        locked = false;
+    }
+};
+
+void release_context_locked(SolverContext& ctx) {
+    aero_lbm_release_context(ctx.context_key);
+    if (ctx.owns_runtime_lock) {
+        ctx.owns_runtime_lock = false;
+        aero_lbm_runtime_unlock();
+    }
+}
+
+void clear_contexts_locked(SolverGlobals& globals) {
+    for (auto& entry : globals.contexts) {
+        if (entry.second) {
+            release_context_locked(*entry.second);
+        }
+    }
+    globals.contexts.clear();
 }
 
 bool valid_grid(const AeroGridDesc& grid, int* out_cells) {
@@ -85,8 +147,9 @@ bool valid_grid(const AeroGridDesc& grid, int* out_cells) {
 }
 
 SolverContext* lookup_context(long long handle) {
-    auto it = g_contexts.find(handle);
-    if (it == g_contexts.end() || !it->second) {
+    auto& contexts = solver_globals().contexts;
+    auto it = contexts.find(handle);
+    if (it == contexts.end() || !it->second) {
         set_error("invalid solver handle");
         return nullptr;
     }
@@ -175,6 +238,17 @@ float max_velocity_from_output(int cells, const float* flow, int value_count) {
         }
     }
     return max_velocity;
+}
+
+void clear_force_moment(AeroForceMoment& out, const float* reference_point) {
+    for (int axis = 0; axis < 3; ++axis) {
+        out.force[axis] = 0.0f;
+        out.moment[axis] = 0.0f;
+        out.center_of_pressure[axis] = reference_point ? finite_or(reference_point[axis], 0.0f) : 0.0f;
+        out.reference_point[axis] = reference_point ? finite_or(reference_point[axis], 0.0f) : 0.0f;
+    }
+    out.surface_link_count = 0;
+    out.status = AERO_SOLVER_STATUS_ERROR;
 }
 
 AeroLbmBoundaryFaceConfig make_face(int hydro_kind, int thermal_kind) {
@@ -282,11 +356,12 @@ bool step_solver_locked(
         return false;
     }
     if (!configure_benchmark_boundary(ctx, boundary)) {
-        if (g_last_error.empty()) {
+        if (solver_globals().last_error.empty()) {
             set_error(std::string("failed to configure boundary: ") + aero_lbm_last_error());
         }
         return false;
     }
+    force_distribution_readback_solver_mode();
     const bool overwrite_flow_state = !ctx.custom_flow_state;
     const bool boundary_changes_packet = overwrite_flow_state && !same_boundary_for_packet(ctx.packet_boundary, boundary);
     if (ctx.packet_dirty || boundary_changes_packet) {
@@ -326,6 +401,7 @@ bool step_solver_locked(
             ctx.native_payload_uploaded = native_runtime_is_opencl();
         }
     }
+    ctx.force_boundary = boundary;
     return true;
 }
 
@@ -374,7 +450,8 @@ AERO_LBM_CAPI_EXPORT int aero_solver_create_with_grid(
     const AeroGridDesc* grid,
     long long* out_handle
 ) {
-    std::lock_guard<std::mutex> lock(g_solver_mutex);
+    SolverGlobals& globals = solver_globals();
+    std::lock_guard<SolverSpinMutex> lock(globals.mutex);
     clear_error();
     if (!grid || !out_handle) {
         set_error("missing grid or output handle");
@@ -384,31 +461,36 @@ AERO_LBM_CAPI_EXPORT int aero_solver_create_with_grid(
     if (!valid_grid(*grid, &cells)) {
         return AERO_SOLVER_STATUS_ERROR;
     }
+    clear_contexts_locked(globals);
+    ScopedRuntimeLock runtime_lock;
+    force_distribution_readback_solver_mode();
     if (!aero_lbm_init_rect(grid->nx, grid->ny, grid->nz, kInputChannels, kOutputChannels)) {
         set_error(std::string("aero_lbm_init_rect failed: ") + aero_lbm_last_error());
         return AERO_SOLVER_STATUS_ERROR;
     }
 
-    g_contexts.clear();
     auto ctx = std::make_unique<SolverContext>();
-    ctx->handle = g_next_handle++;
-    if (g_next_handle <= 0) {
-        g_next_handle = 1;
+    ctx->handle = globals.next_handle++;
+    if (globals.next_handle <= 0) {
+        globals.next_handle = 1;
     }
     ctx->context_key = ctx->handle;
     ctx->grid = *grid;
     ctx->cells = cells;
+    ctx->owns_runtime_lock = true;
+    runtime_lock.transfer();
     ctx->solid_mask.assign(static_cast<std::size_t>(cells), 0u);
     ctx->packet.assign(static_cast<std::size_t>(cells) * kInputChannels, 0.0f);
     AeroBoundaryDesc boundary{};
     aero_solver_default_boundary(&boundary);
     initialize_packet(*ctx, boundary, true);
     ctx->packet_boundary = boundary;
+    ctx->force_boundary = boundary;
     ctx->packet_dirty = false;
     ctx->native_payload_uploaded = false;
 
     const long long handle = ctx->handle;
-    g_contexts.emplace(handle, std::move(ctx));
+    globals.contexts.emplace(handle, std::move(ctx));
     *out_handle = handle;
     return AERO_SOLVER_STATUS_OK;
 }
@@ -418,7 +500,8 @@ AERO_LBM_CAPI_EXPORT int aero_solver_set_solid_mask(
     const uint8_t* solid_mask,
     int cell_count
 ) {
-    std::lock_guard<std::mutex> lock(g_solver_mutex);
+    SolverGlobals& globals = solver_globals();
+    std::lock_guard<SolverSpinMutex> lock(globals.mutex);
     clear_error();
     SolverContext* ctx = lookup_context(handle);
     if (!ctx) {
@@ -441,7 +524,8 @@ AERO_LBM_CAPI_EXPORT int aero_solver_set_flow_state(
     const float* flow,
     int value_count
 ) {
-    std::lock_guard<std::mutex> lock(g_solver_mutex);
+    SolverGlobals& globals = solver_globals();
+    std::lock_guard<SolverSpinMutex> lock(globals.mutex);
     clear_error();
     SolverContext* ctx = lookup_context(handle);
     if (!ctx) {
@@ -481,7 +565,8 @@ AERO_LBM_CAPI_EXPORT int aero_solver_step_wind_tunnel(
     float* out_flow,
     int out_value_count
 ) {
-    std::lock_guard<std::mutex> lock(g_solver_mutex);
+    SolverGlobals& globals = solver_globals();
+    std::lock_guard<SolverSpinMutex> lock(globals.mutex);
     clear_error();
     SolverContext* ctx = lookup_context(handle);
     if (!ctx) {
@@ -502,7 +587,8 @@ AERO_LBM_CAPI_EXPORT int aero_solver_advance_wind_tunnel(
     const AeroBoundaryDesc* boundary,
     int steps
 ) {
-    std::lock_guard<std::mutex> lock(g_solver_mutex);
+    SolverGlobals& globals = solver_globals();
+    std::lock_guard<SolverSpinMutex> lock(globals.mutex);
     clear_error();
     SolverContext* ctx = lookup_context(handle);
     if (!ctx) {
@@ -524,7 +610,8 @@ AERO_LBM_CAPI_EXPORT int aero_solver_extract_flow_atlas(
     float* out_flow_atlas,
     int out_value_count
 ) {
-    std::lock_guard<std::mutex> lock(g_solver_mutex);
+    SolverGlobals& globals = solver_globals();
+    std::lock_guard<SolverSpinMutex> lock(globals.mutex);
     clear_error();
     SolverContext* ctx = lookup_context(handle);
     if (!ctx) {
@@ -557,12 +644,59 @@ AERO_LBM_CAPI_EXPORT int aero_solver_extract_flow_atlas(
     return AERO_SOLVER_STATUS_OK;
 }
 
+AERO_LBM_CAPI_EXPORT int aero_solver_compute_force_moment(
+    long long handle,
+    const float* reference_point,
+    AeroForceMoment* out_force_moment
+) {
+    SolverGlobals& globals = solver_globals();
+    std::lock_guard<SolverSpinMutex> lock(globals.mutex);
+    clear_error();
+    SolverContext* ctx = lookup_context(handle);
+    if (!ctx) {
+        return AERO_SOLVER_STATUS_ERROR;
+    }
+    if (!out_force_moment) {
+        set_error("missing force/moment output");
+        return AERO_SOLVER_STATUS_ERROR;
+    }
+    clear_force_moment(*out_force_moment, reference_point);
+    float values[AERO_LBM_FORCE_MOMENT_FLOATS] = {};
+    int surface_link_count = 0;
+    const float density = std::max(1.0e-6f, finite_or(ctx->force_boundary.density, kDefaultDensityKgM3));
+    if (!aero_lbm_compute_momentum_exchange_force_moment_rect(
+            ctx->grid.nx,
+            ctx->grid.ny,
+            ctx->grid.nz,
+            ctx->context_key,
+            ctx->solid_mask.data(),
+            ctx->grid.dx,
+            ctx->grid.dt,
+            density,
+            reference_point,
+            values,
+            &surface_link_count)) {
+        set_error(std::string("momentum-exchange force/moment failed: ") + aero_lbm_last_error());
+        return AERO_SOLVER_STATUS_ERROR;
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+        out_force_moment->force[axis] = values[axis];
+        out_force_moment->moment[axis] = values[3 + axis];
+        out_force_moment->center_of_pressure[axis] = values[6 + axis];
+        out_force_moment->reference_point[axis] = values[9 + axis];
+    }
+    out_force_moment->surface_link_count = surface_link_count;
+    out_force_moment->status = AERO_SOLVER_STATUS_OK;
+    return AERO_SOLVER_STATUS_OK;
+}
+
 AERO_LBM_CAPI_EXPORT int aero_solver_run_wind_tunnel(
     const AeroStepInput* input,
     AeroStepOutput* output
 ) {
     if (!input || !output || !output->flow_out) {
-        std::lock_guard<std::mutex> lock(g_solver_mutex);
+        SolverGlobals& globals = solver_globals();
+        std::lock_guard<SolverSpinMutex> lock(globals.mutex);
         set_error("missing step input or output");
         return AERO_SOLVER_STATUS_ERROR;
     }
@@ -596,17 +730,19 @@ AERO_LBM_CAPI_EXPORT int aero_solver_run_wind_tunnel(
 }
 
 AERO_LBM_CAPI_EXPORT void aero_solver_destroy(long long handle) {
-    std::lock_guard<std::mutex> lock(g_solver_mutex);
-    auto it = g_contexts.find(handle);
-    if (it == g_contexts.end()) {
+    SolverGlobals& globals = solver_globals();
+    std::lock_guard<SolverSpinMutex> lock(globals.mutex);
+    auto it = globals.contexts.find(handle);
+    if (it == globals.contexts.end()) {
         return;
     }
-    aero_lbm_release_context(it->second->context_key);
-    g_contexts.erase(it);
+    release_context_locked(*it->second);
+    globals.contexts.erase(it);
 }
 
 AERO_LBM_CAPI_EXPORT const char* aero_solver_last_error(void) {
-    return g_last_error.empty() ? aero_lbm_last_error() : g_last_error.c_str();
+    const std::string& error = solver_globals().last_error;
+    return error.empty() ? aero_lbm_last_error() : error.c_str();
 }
 
 AERO_LBM_CAPI_EXPORT const char* aero_solver_runtime_info(void) {
@@ -614,7 +750,8 @@ AERO_LBM_CAPI_EXPORT const char* aero_solver_runtime_info(void) {
 }
 
 AERO_LBM_CAPI_EXPORT int aero_solver_finish(void) {
-    std::lock_guard<std::mutex> lock(g_solver_mutex);
+    SolverGlobals& globals = solver_globals();
+    std::lock_guard<SolverSpinMutex> lock(globals.mutex);
     clear_error();
     if (!aero_lbm_finish()) {
         set_error(std::string("aero_lbm_finish failed: ") + aero_lbm_last_error());

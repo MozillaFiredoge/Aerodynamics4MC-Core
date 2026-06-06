@@ -13,6 +13,7 @@ public final class NativeSimulationBridge {
     public static final int NESTED_FEEDBACK_STATUS_FIELDS = 6;
     public static final int BRICK_HINT_COORDS_PER_BRICK = 3;
     public static final int BRICK_RUNTIME_STATUS_FIELDS = 8;
+    public static final int WIND_TUNNEL_FORCE_MOMENT_FLOATS = 12;
     public static final int REALTIME_SOLVER_AUTO = 0;
     public static final int REALTIME_SOLVER_CLASSIC_D3Q27 = 1;
     public static final int REALTIME_SOLVER_COMPACT_EXPERIMENTAL = 2;
@@ -1190,6 +1191,90 @@ public final class NativeSimulationBridge {
         return nativeLastError();
     }
 
+    public String windTunnelLastError() {
+        if (!LOADED) {
+            return "not_loaded";
+        }
+        return nativeWindTunnelLastError();
+    }
+
+    public long createWindTunnelSolver(int nx, int ny, int nz, float dxMeters, float dtSeconds) {
+        return LOADED
+            && checkedCellCount(nx, ny, nz) > 0
+            && Float.isFinite(dxMeters) && dxMeters > 0.0f
+            && Float.isFinite(dtSeconds) && dtSeconds > 0.0f
+            ? nativeCreateWindTunnelSolver(nx, ny, nz, dxMeters, dtSeconds)
+            : 0L;
+    }
+
+    public boolean setWindTunnelSolidMask(long solverHandle, int nx, int ny, int nz, byte[] solidMask) {
+        int cells = checkedCellCount(nx, ny, nz);
+        return LOADED
+            && solverHandle != 0L
+            && solidMask != null
+            && cells > 0
+            && solidMask.length == cells
+            && nativeSetWindTunnelSolidMask(solverHandle, solidMask);
+    }
+
+    public boolean advanceWindTunnel(
+        long solverHandle,
+        int steps,
+        float inletVx,
+        float inletVy,
+        float inletVz,
+        float density,
+        float viscosity
+    ) {
+        return LOADED
+            && solverHandle != 0L
+            && steps > 0
+            && Float.isFinite(inletVx)
+            && Float.isFinite(inletVy)
+            && Float.isFinite(inletVz)
+            && Float.isFinite(density) && density > 0.0f
+            && Float.isFinite(viscosity) && viscosity > 0.0f
+            && nativeAdvanceWindTunnel(solverHandle, steps, inletVx, inletVy, inletVz, density, viscosity);
+    }
+
+    public WindTunnelForceMoment computeWindTunnelForceMoment(
+        long solverHandle,
+        float referenceX,
+        float referenceY,
+        float referenceZ
+    ) {
+        if (!LOADED || solverHandle == 0L
+            || !Float.isFinite(referenceX)
+            || !Float.isFinite(referenceY)
+            || !Float.isFinite(referenceZ)) {
+            return null;
+        }
+        float[] values = new float[WIND_TUNNEL_FORCE_MOMENT_FLOATS];
+        if (!nativeComputeWindTunnelForceMoment(solverHandle, referenceX, referenceY, referenceZ, values)) {
+            return null;
+        }
+        return new WindTunnelForceMoment(
+            values[0],
+            values[1],
+            values[2],
+            values[3],
+            values[4],
+            values[5],
+            values[6],
+            values[7],
+            values[8],
+            values[9],
+            values[10],
+            values[11]
+        );
+    }
+
+    public void destroyWindTunnelSolver(long solverHandle) {
+        if (LOADED && solverHandle != 0L) {
+            nativeDestroyWindTunnelSolver(solverHandle);
+        }
+    }
+
     private static int checkedCellCount(int nx, int ny, int nz) {
         if (nx <= 0 || ny <= 0 || nz <= 0) {
             return -1;
@@ -1233,6 +1318,22 @@ public final class NativeSimulationBridge {
         int forcingDirtyCount,
         int pendingReinitCount,
         int epoch
+    ) {
+    }
+
+    public record WindTunnelForceMoment(
+        float forceX,
+        float forceY,
+        float forceZ,
+        float momentX,
+        float momentY,
+        float momentZ,
+        float centerOfPressureX,
+        float centerOfPressureY,
+        float centerOfPressureZ,
+        float referenceX,
+        float referenceY,
+        float referenceZ
     ) {
     }
 
@@ -1654,4 +1755,36 @@ public final class NativeSimulationBridge {
     private static native String nativeRuntimeInfo();
 
     private static native String nativeLastError();
+
+    private static native String nativeWindTunnelLastError();
+
+    private static native long nativeCreateWindTunnelSolver(
+        int nx,
+        int ny,
+        int nz,
+        float dxMeters,
+        float dtSeconds
+    );
+
+    private static native boolean nativeSetWindTunnelSolidMask(long solverHandle, byte[] solidMask);
+
+    private static native boolean nativeAdvanceWindTunnel(
+        long solverHandle,
+        int steps,
+        float inletVx,
+        float inletVy,
+        float inletVz,
+        float density,
+        float viscosity
+    );
+
+    private static native boolean nativeComputeWindTunnelForceMoment(
+        long solverHandle,
+        float referenceX,
+        float referenceY,
+        float referenceZ,
+        float[] outValues
+    );
+
+    private static native void nativeDestroyWindTunnelSolver(long solverHandle);
 }

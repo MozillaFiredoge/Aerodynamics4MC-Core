@@ -12,6 +12,7 @@ extern "C" {
 enum {
     AERO_SOLVER_ABI_VERSION = 1,
     AERO_SOLVER_FLOW_CHANNELS = 4,
+    AERO_SOLVER_FORCE_MOMENT_FLOATS = 12,
     AERO_SOLVER_STATUS_OK = 1,
     AERO_SOLVER_STATUS_ERROR = 0
 };
@@ -54,6 +55,15 @@ typedef struct AeroStepOutput {
     float max_velocity;
     int status;
 } AeroStepOutput;
+
+typedef struct AeroForceMoment {
+    float force[3];
+    float moment[3];
+    float center_of_pressure[3];
+    float reference_point[3];
+    int surface_link_count;
+    int status;
+} AeroForceMoment;
 
 AERO_LBM_CAPI_EXPORT void aero_solver_default_grid(AeroGridDesc* out_grid);
 AERO_LBM_CAPI_EXPORT void aero_solver_default_boundary(AeroBoundaryDesc* out_boundary);
@@ -103,6 +113,12 @@ AERO_LBM_CAPI_EXPORT int aero_solver_extract_flow_atlas(
     int stride,
     float* out_flow_atlas,
     int out_value_count
+);
+
+AERO_LBM_CAPI_EXPORT int aero_solver_compute_force_moment(
+    long long handle,
+    const float* reference_point,
+    AeroForceMoment* out_force_moment
 );
 
 AERO_LBM_CAPI_EXPORT int aero_solver_run_wind_tunnel(

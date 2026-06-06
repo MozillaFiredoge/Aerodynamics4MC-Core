@@ -436,6 +436,16 @@ struct RealtimeSolverModeScope {
     }
 };
 
+struct LbmRuntimeScope {
+    LbmRuntimeScope() {
+        aero_lbm_runtime_lock();
+    }
+
+    ~LbmRuntimeScope() {
+        aero_lbm_runtime_unlock();
+    }
+};
+
 void release_brick_runtime_contexts(FluidWorldRuntime& runtime) {
     for (auto& entry : runtime.bricks) {
         release_brick_context(entry.second);
@@ -4831,6 +4841,7 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_simulation_step_brick_world_runtime(
         set_simulation_last_error("simulation_step_brick_world_runtime: missing brick runtime");
         return 0;
     }
+    LbmRuntimeScope runtime_scope;
     return step_brick_world_runtime(*service, world_key, runtime_iterator->second, step_count) ? 1 : 0;
 }
 
@@ -6864,7 +6875,7 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_simulation_sample_region_point(
 }
 
 AERO_LBM_CAPI_EXPORT const char* aero_lbm_simulation_runtime_info(void) {
-    static std::string text;
+    thread_local std::string text;
     std::lock_guard<SpinMutex> lock(g_simulation_mutex);
     size_t active_region_count = 0;
     size_t static_region_count = 0;
@@ -7017,7 +7028,7 @@ AERO_LBM_CAPI_EXPORT const char* aero_lbm_simulation_runtime_info(void) {
 }
 
 AERO_LBM_CAPI_EXPORT const char* aero_lbm_simulation_last_error(void) {
-    static std::string text;
+    thread_local std::string text;
     std::lock_guard<SpinMutex> lock(g_simulation_mutex);
     text = g_simulation_last_error;
     return text.c_str();

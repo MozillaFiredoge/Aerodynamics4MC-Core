@@ -25,14 +25,18 @@ It currently supports:
 - Wind-tunnel boundary conditions.
 - Optional previous macro flow field for restart/initialization.
 - Output macro velocity and pressure-proxy fields.
+- Distribution-level momentum-exchange force/moment readback for static voxel solids.
 
 It does not yet support:
 
 - Dynamic/moving boundaries.
 - Near-sonic or compressible CFD.
 - Propeller rotation.
-- Force/moment integration.
+- Curved-wall/SDF geometry correction.
+- GPU-side force/moment reduction for the compact and fp16 realtime paths.
 - Multiple independent grid shapes in the same process.
+
+For force/moment readback, the high-level wind-tunnel wrapper currently pins the runtime solver mode to classic D3Q27. This keeps the D3Q27 distributions available for wall-link momentum exchange. The compact and D3Q27 fp16 inplace realtime paths remain useful for flow-field throughput, but they cannot yet produce this force/moment readback without an additional GPU reduction or host-side fp16 distribution decoder.
 
 ## Coordinate Convention
 
@@ -102,7 +106,7 @@ int run_case(const uint8_t* solid, float* out_flow) {
     boundary.inlet_vy = 0.0f;
     boundary.inlet_vz = 0.0f;
     boundary.outlet_pressure = 0.0f; // dimensionless rho_delta
-    boundary.density = 1.225f;       // kg/m^3, diagnostic/reference only
+    boundary.density = 1.225f;       // kg/m^3, force/moment scale
     boundary.viscosity = 1.5e-5f;    // m^2/s
 
     const int steps = 256;
@@ -138,6 +142,36 @@ int ok = aero_solver_advance_wind_tunnel(solver, &boundary, steps);
 ```
 
 This advances the same persistent LBM context but does not run the output/readback path. After one normal step uploads the static packet, unchanged wind-tunnel calls can reuse the GPU-resident payload through the cached native step path.
+
+## Force / Moment Readback
+
+Use `aero_solver_compute_force_moment` after one or more wind-tunnel steps:
+
+```c
+float reference_point[3] = {32.0f, 32.0f, 32.0f};
+AeroForceMoment fm = {0};
+int ok = aero_solver_compute_force_moment(solver, reference_point, &fm);
+```
+
+The output is in the solver grid coordinate system:
+
+```text
+force[]              momentum-exchange force on the solid body, N
+moment[]             momentum-exchange moment about reference_point, N*m
+center_of_pressure[] force-magnitude weighted D3Q27 wall-link center, m
+reference_point[]    copied reference point, m
+surface_link_count   number of solid-fluid D3Q27 links integrated
+```
+
+The native implementation integrates the distributions used by the most recent bounce-back step:
+
+```text
+dF_lattice = 2 * f_i * c_i
+dF_N       = dF_lattice * density * dx^4 / dt^2
+dM_Nm      = (link_midpoint - reference_point) cross dF_N
+```
+
+This is a wall-link momentum-exchange method, not a pressure-proxy macro-field estimate. It includes all D3Q27 links, including diagonal links. Call it after at least one `aero_solver_step_wind_tunnel` or `aero_solver_advance_wind_tunnel` call.
 
 ## Convenience One-Shot API
 
@@ -213,12 +247,26 @@ pressure_proxy = rho - 1
 
 Do not interpret it as Pascals in this MVP API.
 
+Force/moment readback is converted from lattice force using:
+
+```text
+force_scale = density * dx^4 / dt^2
+```
+
+`density`, `dx`, and `dt` therefore affect force and moment magnitudes directly.
+
 ## Current Limitations
 
 - The underlying native solver has global grid/runtime configuration. Treat this API as single active grid shape per process for now.
 - The API is serialized internally with a mutex. It is safe from concurrent calls, but not designed for parallel throughput yet.
 - Boundary conditions are configured through the existing benchmark-mode path. This is appropriate for wind-tunnel validation, but not a final aerodynamic analysis ABI.
-- `density` is stored in the benchmark config as a reference value, but force output is not exposed yet, so it does not currently affect returned fields.
+- Geometry is voxel stair-stepped. The link midpoint assumes halfway bounce-back; there is no curved wall, SDF intersection, or immersed-boundary correction yet.
+- Force/moment currently assumes static no-slip solids. Moving and rotating body wall velocity is not included in the momentum-exchange formula yet.
+- The current force readback supports CPU and classic D3Q27 OpenCL states. Compact macro and D3Q27 fp16 inplace paths need a dedicated GPU reduction or host parity decoder before they can report force/moment.
+- Classic OpenCL force readback reads a full D3Q27 distribution buffer to the host. This is acceptable for 32^3 validation, but too expensive to treat as final for 128^3 realtime feedback.
+- Coefficients still need validation against canonical cases such as sphere/cylinder drag, grid convergence, and reference-domain-size sweeps before they should be treated as engineering numbers.
+- The solver remains low-Mach and weakly compressible. Pressure output remains a solver pressure proxy rather than measured Pascals.
+- Side boundaries and finite tunnel length can contaminate force/moment unless the domain and boundary modes are validated for the case.
 - `aero_solver_step_wind_tunnel` includes full-field output readback and unit conversion. Use `aero_solver_advance_wind_tunnel` for MLUPS-style solver-only benchmarking.
 
 ## Debugging

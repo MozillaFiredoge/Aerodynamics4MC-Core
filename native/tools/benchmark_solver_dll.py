@@ -104,6 +104,17 @@ class AeroBoundaryDesc(ctypes.Structure):
     ]
 
 
+class AeroForceMoment(ctypes.Structure):
+    _fields_ = [
+        ("force", ctypes.c_float * 3),
+        ("moment", ctypes.c_float * 3),
+        ("center_of_pressure", ctypes.c_float * 3),
+        ("reference_point", ctypes.c_float * 3),
+        ("surface_link_count", ctypes.c_int),
+        ("status", ctypes.c_int),
+    ]
+
+
 def load_library(path: Path) -> ctypes.CDLL:
     if not path.exists():
         raise FileNotFoundError(f"DLL not found: {path}")
@@ -164,6 +175,16 @@ def configure_api(lib: ctypes.CDLL) -> None:
             ctypes.c_int,
         ]
         lib.aero_solver_extract_flow_atlas.restype = ctypes.c_int
+    except AttributeError:
+        pass
+
+    try:
+        lib.aero_solver_compute_force_moment.argtypes = [
+            ctypes.c_longlong,
+            ctypes.POINTER(ctypes.c_float),
+            ctypes.POINTER(AeroForceMoment),
+        ]
+        lib.aero_solver_compute_force_moment.restype = ctypes.c_int
     except AttributeError:
         pass
 
@@ -231,6 +252,72 @@ def native_memory_info(lib: ctypes.CDLL) -> str:
     if not ptr:
         return "native memory unavailable"
     return ptr.decode("utf-8", errors="replace")
+
+
+def parse_vec3(text: str) -> tuple[float, float, float]:
+    parts = [part.strip() for part in text.split(",")]
+    if len(parts) != 3:
+        raise argparse.ArgumentTypeError("expected x,y,z")
+    try:
+        return (float(parts[0]), float(parts[1]), float(parts[2]))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("expected numeric x,y,z") from exc
+
+
+def compute_force_moment(
+    lib: ctypes.CDLL,
+    handle: int,
+    reference: tuple[float, float, float],
+) -> AeroForceMoment | None:
+    fn = getattr(lib, "aero_solver_compute_force_moment", None)
+    if fn is None:
+        return None
+    ref = (ctypes.c_float * 3)(*reference)
+    result = AeroForceMoment()
+    if not fn(handle, ref, ctypes.byref(result)):
+        raise RuntimeError(native_error(lib))
+    return result
+
+
+def force_moment_dict(result: AeroForceMoment | None) -> dict[str, object] | None:
+    if result is None:
+        return None
+    return {
+        "force_n": [float(result.force[i]) for i in range(3)],
+        "moment_nm": [float(result.moment[i]) for i in range(3)],
+        "center_of_pressure_m": [float(result.center_of_pressure[i]) for i in range(3)],
+        "reference_point_m": [float(result.reference_point[i]) for i in range(3)],
+        "surface_link_count": int(result.surface_link_count),
+        "status": int(result.status),
+    }
+
+
+def validate_force_moment_result(
+    result: AeroForceMoment | None,
+    obstacle_type: str,
+    velocity: float,
+    reference: tuple[float, float, float],
+    total_steps: int,
+) -> list[str]:
+    errors: list[str] = []
+    if result is None:
+        return ["aero_solver_compute_force_moment is not available in this native library"]
+    force = [float(result.force[i]) for i in range(3)]
+    moment = [float(result.moment[i]) for i in range(3)]
+    if result.surface_link_count <= 0 and obstacle_type != "none":
+        errors.append("surface_link_count is zero for a solid obstacle")
+    if total_steps >= 16 and velocity > 0.0 and obstacle_type != "none" and force[0] <= 0.0:
+        errors.append(f"expected positive x drag for positive inlet velocity, got fx={force[0]:.6g}")
+    if not all(math.isfinite(value) for value in (*force, *moment)):
+        errors.append("force/moment contains non-finite values")
+    if obstacle_type in {"cube", "sphere", "cylinder"}:
+        force_mag = math.sqrt(sum(value * value for value in force))
+        moment_mag = math.sqrt(moment[1] * moment[1] + moment[2] * moment[2])
+        if force_mag > 1e-6 and moment_mag / force_mag > 0.75:
+            errors.append(
+                f"symmetric obstacle pitch/yaw moment arm looks too large: |Myz|/|F|={moment_mag / force_mag:.6g}m"
+            )
+    return errors
 
 
 def cell_index(x: int, y: int, z: int, ny: int, nz: int) -> int:
@@ -996,6 +1083,22 @@ def main() -> int:
         default="",
         help="Fail unless aero_solver_runtime_info contains this substring, e.g. d3q27-fp16-inplace-srt",
     )
+    parser.add_argument(
+        "--force-moment",
+        action="store_true",
+        help="Compute and print native force/moment after the final flow state is available.",
+    )
+    parser.add_argument(
+        "--force-reference",
+        type=parse_vec3,
+        default=None,
+        help="Reference point for moment integration as x,y,z in meters. Defaults to the grid center.",
+    )
+    parser.add_argument(
+        "--validate-force-moment",
+        action="store_true",
+        help="Fail if force/moment sanity checks do not pass. Implies --force-moment.",
+    )
     args = parser.parse_args()
     preset = apply_scenario_defaults(args)
 
@@ -1018,12 +1121,22 @@ def main() -> int:
     cells = nx * ny * nz
     value_count = cells * AERO_SOLVER_FLOW_CHANNELS
     simulated_seconds = args.frames * args.steps_per_frame * args.dt
+    force_reference = args.force_reference
+    if force_reference is None:
+        force_reference = (0.5 * nx * args.dx, 0.5 * ny * args.dx, 0.5 * nz * args.dx)
+    if args.validate_force_moment:
+        args.force_moment = True
     print(f"[bench] dll={args.dll}")
     print(f"[bench] scenario={args.scenario}")
     print(f"[bench] grid={nx}x{ny}x{nz} cells={cells:,} flow_values={value_count:,}")
     print(f"[bench] dx={args.dx:g}m dt={args.dt:g}s inlet_vx={args.velocity:g}m/s steps/frame={args.steps_per_frame}")
     print(f"[bench] simulated_seconds={simulated_seconds:g}")
     print(f"[bench] readback={'off' if args.no_readback else 'full-field every frame'}")
+    if args.force_moment:
+        print(
+            "[bench] force_reference="
+            f"({force_reference[0]:.6g}, {force_reference[1]:.6g}, {force_reference[2]:.6g})"
+        )
 
     lib = load_library(args.dll)
     configure_api(lib)
@@ -1251,6 +1364,49 @@ def main() -> int:
             artifact_paths["final_flow_npz"] = str(final_flow_path)
             print(f"[bench] wrote_final_flow={final_flow_path}")
 
+        force_moment_result: AeroForceMoment | None = None
+        force_moment_summary = None
+        if args.force_moment:
+            try:
+                force_moment_result = compute_force_moment(lib, handle.value, force_reference)
+            except RuntimeError as exc:
+                raise SystemExit(f"force/moment failed: {exc}") from exc
+            force_moment_summary = force_moment_dict(force_moment_result)
+            if force_moment_summary is None:
+                raise SystemExit("force/moment failed: native library does not export aero_solver_compute_force_moment")
+            print(
+                "  force_n="
+                f"({force_moment_summary['force_n'][0]:.6f}, "
+                f"{force_moment_summary['force_n'][1]:.6f}, "
+                f"{force_moment_summary['force_n'][2]:.6f})"
+            )
+            print(
+                "  moment_nm="
+                f"({force_moment_summary['moment_nm'][0]:.6f}, "
+                f"{force_moment_summary['moment_nm'][1]:.6f}, "
+                f"{force_moment_summary['moment_nm'][2]:.6f})"
+            )
+            print(
+                "  center_of_pressure_m="
+                f"({force_moment_summary['center_of_pressure_m'][0]:.6f}, "
+                f"{force_moment_summary['center_of_pressure_m'][1]:.6f}, "
+                f"{force_moment_summary['center_of_pressure_m'][2]:.6f})"
+            )
+            print(f"  surface_link_count={force_moment_summary['surface_link_count']}")
+            if args.validate_force_moment:
+                validation_errors = validate_force_moment_result(
+                    force_moment_result,
+                    obstacle_type,
+                    args.velocity,
+                    force_reference,
+                    args.frames * args.steps_per_frame,
+                )
+                if validation_errors:
+                    for error in validation_errors:
+                        print(f"  force_moment_validation_error={error}")
+                    raise SystemExit("force/moment validation failed")
+                print("  force_moment_validation=pass")
+
         avg_ms = sum(times_ms) / len(times_ms)
         mlups = cells * args.steps_per_frame / (avg_ms * 1000.0)
         memory_info = native_memory_info(lib)
@@ -1290,6 +1446,7 @@ def main() -> int:
                 "native_timing": measured_native_timing,
                 "native_timing_after_final_readback": final_native_timing if final_readback_done else None,
                 "native_memory": memory_info,
+                "force_moment": force_moment_summary,
             }
             manifest = {
                 "schema_version": 1,

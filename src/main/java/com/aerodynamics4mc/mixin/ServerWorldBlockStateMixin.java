@@ -20,7 +20,12 @@ abstract class ServerWorldBlockStateMixin {
     private static final ThreadLocal<ArrayDeque<ChangeContext>> A4MC_BLOCK_CHANGE_STACK =
             ThreadLocal.withInitial(ArrayDeque::new);
 
-    @Inject(method = "precipitationAt", at = @At("HEAD"), cancellable = true)
+    @Inject(
+            method = {"precipitationAt", "getPrecipitationAt", "getPrecipitation"},
+            at = @At("HEAD"),
+            cancellable = true,
+            require = 0
+    )
     private void a4mc$useLocalPrecipitation(BlockPos pos, CallbackInfoReturnable<Biome.Precipitation> cir) {
         if (!((Object) this instanceof ServerLevel world)) {
             return;

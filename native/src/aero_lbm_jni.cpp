@@ -3,6 +3,7 @@
 #include "aero_lbm_capi.h"
 #include "aero_lbm_hydro_core.h"
 #include "aero_lbm_mesoscale.h"
+#include "aero_solver_capi.h"
 #include "aero_lbm_thermal_core.h"
 
 #include <algorithm>
@@ -14,12 +15,14 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <iomanip>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -513,6 +516,44 @@ struct SpinMutex {
     }
 };
 
+struct RecursiveSpinMutex {
+    SpinMutex state;
+    std::thread::id owner;
+    unsigned int depth = 0;
+
+    void lock() {
+        const std::thread::id current = std::this_thread::get_id();
+        for (;;) {
+            state.lock();
+            if (depth == 0) {
+                owner = current;
+                depth = 1;
+                state.unlock();
+                return;
+            }
+            if (owner == current) {
+                ++depth;
+                state.unlock();
+                return;
+            }
+            state.unlock();
+            std::this_thread::yield();
+        }
+    }
+
+    void unlock() {
+        const std::thread::id current = std::this_thread::get_id();
+        state.lock();
+        if (depth > 0 && owner == current) {
+            --depth;
+            if (depth == 0) {
+                owner = std::thread::id{};
+            }
+        }
+        state.unlock();
+    }
+};
+
 struct ContextState {
     std::unique_ptr<SpinMutex> mutex = std::make_unique<SpinMutex>();
     int nx = 0;
@@ -612,6 +653,7 @@ Config g_cfg;
 std::unordered_map<jlong, ContextState> g_contexts;
 SpinMutex g_contexts_mutex;
 std::string g_last_native_error;
+std::string g_wind_tunnel_last_error;
 int g_realtime_solver_mode = AERO_LBM_REALTIME_SOLVER_AUTO;
 
 struct StepTiming {
@@ -656,12 +698,53 @@ TimingStats g_timing;
 AeroLbmBenchmarkConfig g_benchmark_cfg = make_default_benchmark_config();
 using Clock = std::chrono::steady_clock;
 
+RecursiveSpinMutex& runtime_mutex() {
+    static RecursiveSpinMutex* mutex = new RecursiveSpinMutex();
+    return *mutex;
+}
+
+struct RuntimeGuard {
+    RuntimeGuard() {
+        runtime_mutex().lock();
+    }
+
+    ~RuntimeGuard() {
+        runtime_mutex().unlock();
+    }
+};
+
 inline void clear_last_native_error() {
     g_last_native_error.clear();
 }
 
 inline void set_last_native_error(std::string error) {
     g_last_native_error = std::move(error);
+}
+
+inline void clear_wind_tunnel_last_error() {
+    g_wind_tunnel_last_error.clear();
+    clear_last_native_error();
+}
+
+inline void set_wind_tunnel_last_error(std::string error) {
+    if (error.empty()) {
+        error = "unknown wind-tunnel solver error";
+    }
+    g_wind_tunnel_last_error = error;
+    set_last_native_error(std::move(error));
+}
+
+std::string wind_tunnel_solver_error(const char* prefix) {
+    const char* raw = aero_solver_last_error();
+    if (!raw || raw[0] == '\0') {
+        raw = aero_lbm_last_error();
+    }
+    std::string message = prefix ? prefix : "wind_tunnel_solver";
+    if (raw && raw[0] != '\0') {
+        message += ": ";
+        message += raw;
+    }
+    return message;
 }
 
 enum BoundaryFaceIndex {
@@ -8715,6 +8798,97 @@ bool run_solver_cached_step(ContextState& ctx, float* out, StepTiming& timing, f
 #endif
 }
 
+constexpr int kMomentumExchangeValueCount = AERO_LBM_FORCE_MOMENT_FLOATS;
+
+void clear_force_moment_values(const float* reference_point, float* out_values, int* out_surface_link_count) {
+    if (out_values) {
+        const float ref_x = reference_point && std::isfinite(reference_point[0]) ? reference_point[0] : 0.0f;
+        const float ref_y = reference_point && std::isfinite(reference_point[1]) ? reference_point[1] : 0.0f;
+        const float ref_z = reference_point && std::isfinite(reference_point[2]) ? reference_point[2] : 0.0f;
+        for (int i = 0; i < kMomentumExchangeValueCount; ++i) {
+            out_values[i] = 0.0f;
+        }
+        out_values[6] = ref_x;
+        out_values[7] = ref_y;
+        out_values[8] = ref_z;
+        out_values[9] = ref_x;
+        out_values[10] = ref_y;
+        out_values[11] = ref_z;
+    }
+    if (out_surface_link_count) {
+        *out_surface_link_count = 0;
+    }
+}
+
+bool latest_momentum_exchange_distributions(
+    ContextState& ctx,
+    std::vector<float>& staging,
+    const float*& out_distributions
+) {
+    out_distributions = nullptr;
+    if (ctx.cells == 0 || ctx.step_counter == 0) {
+        set_last_native_error("momentum_exchange_force_moment: advance the solver before force readback");
+        return false;
+    }
+    const std::size_t distribution_values = ctx.cells * static_cast<std::size_t>(kQ);
+
+#if defined(AERO_LBM_OPENCL)
+    if (g_cfg.opencl_enabled && ctx.d3q27_f16_buffers_ready && ctx.d3q27_f16_initialized) {
+        set_last_native_error(
+            "momentum_exchange_force_moment: d3q27 fp16 inplace path needs a GPU reduction or host parity decoder"
+        );
+        return false;
+    }
+    if (g_cfg.opencl_enabled && ctx.compact_buffers_ready && ctx.compact_initialized) {
+        set_last_native_error(
+            "momentum_exchange_force_moment: compact macro path does not store D3Q27 distributions"
+        );
+        return false;
+    }
+    if (g_cfg.opencl_enabled && ctx.gpu_buffers_ready && ctx.gpu_initialized) {
+        staging.assign(distribution_values, 0.0f);
+        cl_mem last_read_buffer = (ctx.step_counter % 2 == 0) ? ctx.d_f_post : ctx.d_f;
+        const cl_int err = enqueue_read_buffer_chunked(
+            last_read_buffer,
+            distribution_values * sizeof(float),
+            staging.data()
+        );
+        if (err != CL_SUCCESS) {
+            set_last_native_error(format_opencl_api_error("clEnqueueReadBuffer(momentum_exchange:f_read)", err));
+            return false;
+        }
+        out_distributions = staging.data();
+        return true;
+    }
+#endif
+
+    if (ctx.f_post.size() == distribution_values) {
+        out_distributions = ctx.f_post.data();
+        return true;
+    }
+
+    set_last_native_error("momentum_exchange_force_moment: no D3Q27 source distributions are available");
+    return false;
+}
+
+bool mask_solid_at(const std::uint8_t* solid_mask, int x, int y, int z, int nx, int ny, int nz) {
+    return solid_mask[cell_index(x, y, z, nx, ny, nz)] != 0;
+}
+
+void add_force_moment_cross(
+    double rx,
+    double ry,
+    double rz,
+    double fx,
+    double fy,
+    double fz,
+    double moment[3]
+) {
+    moment[0] += ry * fz - rz * fy;
+    moment[1] += rz * fx - rx * fz;
+    moment[2] += rx * fy - ry * fx;
+}
+
 }  // namespace
 
 extern "C" {
@@ -9984,18 +10158,22 @@ static void native_benchmark_reset_config_impl() {
 }
 
 AERO_LBM_CAPI_EXPORT int aero_lbm_init(int grid_size, int input_channels, int output_channels) {
+    RuntimeGuard guard;
     return native_init_impl(grid_size, input_channels, output_channels) ? 1 : 0;
 }
 
 AERO_LBM_CAPI_EXPORT int aero_lbm_step(const float* packet, int grid_size, long long context_key, float* output_flow) {
+    RuntimeGuard guard;
     return native_step_raw_impl(packet, grid_size, static_cast<jlong>(context_key), output_flow) ? 1 : 0;
 }
 
 AERO_LBM_CAPI_EXPORT int aero_lbm_init_rect(int nx, int ny, int nz, int input_channels, int output_channels) {
+    RuntimeGuard guard;
     return native_init_dims_impl(nx, ny, nz, input_channels, output_channels) ? 1 : 0;
 }
 
 AERO_LBM_CAPI_EXPORT int aero_lbm_step_rect(const float* packet, int nx, int ny, int nz, long long context_key, float* output_flow) {
+    RuntimeGuard guard;
     return native_step_raw_dims_impl(packet, nx, ny, nz, static_cast<jlong>(context_key), output_flow) ? 1 : 0;
 }
 
@@ -10008,6 +10186,7 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_step_rect_scaled(
     float output_velocity_scale,
     float* output_flow
 ) {
+    RuntimeGuard guard;
     return native_step_raw_dims_impl(
         packet,
         nx,
@@ -10020,6 +10199,7 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_step_rect_scaled(
 }
 
 AERO_LBM_CAPI_EXPORT int aero_lbm_step_rect_cached(int nx, int ny, int nz, long long context_key, float* output_flow) {
+    RuntimeGuard guard;
     return native_step_raw_dims_cached_impl(nx, ny, nz, static_cast<jlong>(context_key), output_flow) ? 1 : 0;
 }
 
@@ -10031,6 +10211,7 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_step_rect_cached_scaled(
     float output_velocity_scale,
     float* output_flow
 ) {
+    RuntimeGuard guard;
     return native_step_raw_dims_cached_impl(
         nx,
         ny,
@@ -10051,6 +10232,7 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_patch_d3q27_f16_static_cells_rect(
     const std::uint8_t* solid_values,
     const std::uint8_t* fan_dir_values
 ) {
+    RuntimeGuard guard;
 #if defined(AERO_LBM_OPENCL)
     clear_last_native_error();
     if (!g_cfg.initialized || !g_cfg.opencl_enabled) {
@@ -10109,6 +10291,7 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_set_d3q27_f16_boundary_shell_rect(
     int shell_layers,
     float relaxation
 ) {
+    RuntimeGuard guard;
 #if defined(AERO_LBM_OPENCL)
     clear_last_native_error();
     if (!g_cfg.initialized || !g_cfg.opencl_enabled || !g_opencl.available) {
@@ -10161,6 +10344,7 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_set_d3q27_f16_boundary_shell_rect(
 }
 
 AERO_LBM_CAPI_EXPORT int aero_lbm_clear_d3q27_f16_boundary_shell_rect(long long context_key) {
+    RuntimeGuard guard;
 #if defined(AERO_LBM_OPENCL)
     clear_last_native_error();
     LockedContext locked_context(static_cast<jlong>(context_key), false);
@@ -10186,6 +10370,7 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_step_rect_with_sparse_overlays(
     int overlay_count,
     float* output_flow
 ) {
+    RuntimeGuard guard;
     return native_step_raw_dims_with_sparse_overlays_impl(
         packet,
         nx,
@@ -10200,14 +10385,17 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_step_rect_with_sparse_overlays(
 }
 
 AERO_LBM_CAPI_EXPORT int aero_lbm_shift_context(int grid_size, long long context_key, int dx, int dy, int dz) {
+    RuntimeGuard guard;
     return native_shift_context_impl(grid_size, static_cast<jlong>(context_key), dx, dy, dz) ? 1 : 0;
 }
 
 AERO_LBM_CAPI_EXPORT int aero_lbm_has_context(long long context_key) {
+    RuntimeGuard guard;
     return native_has_context_impl(static_cast<jlong>(context_key)) ? 1 : 0;
 }
 
 AERO_LBM_CAPI_EXPORT int aero_lbm_context_compact_initialized(long long context_key) {
+    RuntimeGuard guard;
     LockedContext locked_context(static_cast<jlong>(context_key), false);
     return locked_context.ctx
         && g_cfg.opencl_enabled
@@ -10218,6 +10406,7 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_context_compact_initialized(long long context_
 }
 
 AERO_LBM_CAPI_EXPORT int aero_lbm_context_realtime_cached_initialized(long long context_key) {
+    RuntimeGuard guard;
     LockedContext locked_context(static_cast<jlong>(context_key), false);
     if (!locked_context.ctx || !g_cfg.opencl_enabled) {
         return 0;
@@ -10237,6 +10426,7 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_exchange_halo(
     int offset_y,
     int offset_z
 ) {
+    RuntimeGuard guard;
     return native_exchange_halo_impl(
         grid_size,
         static_cast<jlong>(first_context_key),
@@ -10258,6 +10448,7 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_exchange_halo_layers_rect(
     int offset_y,
     int offset_z
 ) {
+    RuntimeGuard guard;
     return native_exchange_halo_rect_layers_impl(
         nx,
         ny,
@@ -10272,6 +10463,7 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_exchange_halo_layers_rect(
 }
 
 AERO_LBM_CAPI_EXPORT int aero_lbm_get_temperature_state_rect(int nx, int ny, int nz, long long context_key, float* out_temperature) {
+    RuntimeGuard guard;
     return native_get_temperature_state_raw_dims_impl(nx, ny, nz, static_cast<jlong>(context_key), out_temperature) ? 1 : 0;
 }
 
@@ -10285,6 +10477,7 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_sample_temperature_point_rect(
     int sample_z,
     float* out_temperature
 ) {
+    RuntimeGuard guard;
     return native_sample_temperature_point_raw_dims_impl(
         nx,
         ny,
@@ -10307,6 +10500,7 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_sample_flow_point_rect(
     int sample_z,
     float* out_flow
 ) {
+    RuntimeGuard guard;
     return native_sample_flow_point_raw_dims_impl(
         nx,
         ny,
@@ -10328,6 +10522,7 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_extract_flow_atlas_rect(
     float* out_flow_atlas,
     int value_count
 ) {
+    RuntimeGuard guard;
     return native_extract_flow_atlas_raw_dims_impl(
         nx,
         ny,
@@ -10353,6 +10548,7 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_copy_flow_temperature_subrect(
     float* out_flow,
     float* out_temperature
 ) {
+    RuntimeGuard guard;
     return native_copy_flow_temperature_subrect_raw_dims_impl(
         nx,
         ny,
@@ -10370,6 +10566,7 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_copy_flow_temperature_subrect(
 }
 
 AERO_LBM_CAPI_EXPORT int aero_lbm_get_flow_state_rect(int nx, int ny, int nz, long long context_key, float* out_flow) {
+    RuntimeGuard guard;
     return native_get_flow_state_raw_dims_impl(
         nx,
         ny,
@@ -10386,6 +10583,7 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_set_temperature_state_rect(
     long long context_key,
     const float* temperature
 ) {
+    RuntimeGuard guard;
     return native_set_temperature_state_raw_dims_impl(
         nx,
         ny,
@@ -10395,7 +10593,144 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_set_temperature_state_rect(
     ) ? 1 : 0;
 }
 
+AERO_LBM_CAPI_EXPORT int aero_lbm_compute_momentum_exchange_force_moment_rect(
+    int nx,
+    int ny,
+    int nz,
+    long long context_key,
+    const uint8_t* solid_mask,
+    float dx,
+    float dt,
+    float density,
+    const float* reference_point,
+    float* out_values,
+    int* out_surface_link_count
+) {
+    RuntimeGuard guard;
+    clear_last_native_error();
+    clear_force_moment_values(reference_point, out_values, out_surface_link_count);
+    if (!out_values) {
+        set_last_native_error("momentum_exchange_force_moment: missing output buffer");
+        return 0;
+    }
+    if (nx <= 0 || ny <= 0 || nz <= 0 || nx != g_cfg.nx || ny != g_cfg.ny || nz != g_cfg.nz) {
+        set_last_native_error("momentum_exchange_force_moment: invalid dimensions");
+        return 0;
+    }
+    if (!std::isfinite(dx) || dx <= 0.0f || !std::isfinite(dt) || dt <= 0.0f) {
+        set_last_native_error("momentum_exchange_force_moment: invalid dx/dt");
+        return 0;
+    }
+    const float density_safe = std::isfinite(density) && density > 0.0f ? density : 1.0f;
+    const std::size_t cells = static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny) * static_cast<std::size_t>(nz);
+    LockedContext locked_context(static_cast<jlong>(context_key), false);
+    if (!locked_context.ctx) {
+        set_last_native_error("momentum_exchange_force_moment: context not found");
+        return 0;
+    }
+    ContextState& ctx = *locked_context.ctx;
+    if (ctx.nx != nx || ctx.ny != ny || ctx.nz != nz || ctx.cells != cells) {
+        set_last_native_error("momentum_exchange_force_moment: context shape mismatch");
+        return 0;
+    }
+    const std::uint8_t* mask = solid_mask;
+    if (!mask) {
+        if (ctx.obstacle.size() != cells) {
+            set_last_native_error("momentum_exchange_force_moment: missing solid mask");
+            return 0;
+        }
+        mask = ctx.obstacle.data();
+    }
+
+    std::vector<float> staging;
+    const float* distributions = nullptr;
+    if (!latest_momentum_exchange_distributions(ctx, staging, distributions)) {
+        return 0;
+    }
+
+    const double force_scale =
+        static_cast<double>(density_safe) * std::pow(static_cast<double>(dx), 4.0)
+        / (static_cast<double>(dt) * static_cast<double>(dt));
+    const double ref_x = reference_point && std::isfinite(reference_point[0]) ? reference_point[0] : 0.0;
+    const double ref_y = reference_point && std::isfinite(reference_point[1]) ? reference_point[1] : 0.0;
+    const double ref_z = reference_point && std::isfinite(reference_point[2]) ? reference_point[2] : 0.0;
+
+    double force[3] = {0.0, 0.0, 0.0};
+    double moment[3] = {0.0, 0.0, 0.0};
+    double center_weighted[3] = {0.0, 0.0, 0.0};
+    double center_weight = 0.0;
+    int links = 0;
+
+    for (int x = 0; x < nx; ++x) {
+        for (int y = 0; y < ny; ++y) {
+            for (int z = 0; z < nz; ++z) {
+                const std::size_t fluid_cell = cell_index(x, y, z, nx, ny, nz);
+                if (mask[fluid_cell] != 0) {
+                    continue;
+                }
+                for (int q = 0; q < kQ; ++q) {
+                    if (kCx[q] == 0 && kCy[q] == 0 && kCz[q] == 0) {
+                        continue;
+                    }
+                    const int solid_x = x + kCx[q];
+                    const int solid_y = y + kCy[q];
+                    const int solid_z = z + kCz[q];
+                    if (solid_x < 0 || solid_y < 0 || solid_z < 0
+                        || solid_x >= nx || solid_y >= ny || solid_z >= nz) {
+                        continue;
+                    }
+                    if (!mask_solid_at(mask, solid_x, solid_y, solid_z, nx, ny, nz)) {
+                        continue;
+                    }
+
+                    const float fq_raw = distributions[dist_index(fluid_cell, q, cells)];
+                    const double fq = std::isfinite(fq_raw) ? static_cast<double>(fq_raw) : 0.0;
+                    const double fx = 2.0 * fq * static_cast<double>(kCx[q]) * force_scale;
+                    const double fy = 2.0 * fq * static_cast<double>(kCy[q]) * force_scale;
+                    const double fz = 2.0 * fq * static_cast<double>(kCz[q]) * force_scale;
+                    const double px = (static_cast<double>(x) + 0.5 + 0.5 * static_cast<double>(kCx[q])) * dx;
+                    const double py = (static_cast<double>(y) + 0.5 + 0.5 * static_cast<double>(kCy[q])) * dx;
+                    const double pz = (static_cast<double>(z) + 0.5 + 0.5 * static_cast<double>(kCz[q])) * dx;
+                    const double rx = px - ref_x;
+                    const double ry = py - ref_y;
+                    const double rz = pz - ref_z;
+
+                    force[0] += fx;
+                    force[1] += fy;
+                    force[2] += fz;
+                    add_force_moment_cross(rx, ry, rz, fx, fy, fz, moment);
+
+                    const double weight = std::sqrt(fx * fx + fy * fy + fz * fz);
+                    center_weighted[0] += px * weight;
+                    center_weighted[1] += py * weight;
+                    center_weighted[2] += pz * weight;
+                    center_weight += weight;
+                    ++links;
+                }
+            }
+        }
+    }
+
+    out_values[0] = static_cast<float>(force[0]);
+    out_values[1] = static_cast<float>(force[1]);
+    out_values[2] = static_cast<float>(force[2]);
+    out_values[3] = static_cast<float>(moment[0]);
+    out_values[4] = static_cast<float>(moment[1]);
+    out_values[5] = static_cast<float>(moment[2]);
+    out_values[6] = center_weight > 1.0e-12 ? static_cast<float>(center_weighted[0] / center_weight) : static_cast<float>(ref_x);
+    out_values[7] = center_weight > 1.0e-12 ? static_cast<float>(center_weighted[1] / center_weight) : static_cast<float>(ref_y);
+    out_values[8] = center_weight > 1.0e-12 ? static_cast<float>(center_weighted[2] / center_weight) : static_cast<float>(ref_z);
+    out_values[9] = static_cast<float>(ref_x);
+    out_values[10] = static_cast<float>(ref_y);
+    out_values[11] = static_cast<float>(ref_z);
+    if (out_surface_link_count) {
+        *out_surface_link_count = links;
+    }
+    return 1;
+}
+
 AERO_LBM_CAPI_EXPORT int aero_lbm_get_last_force(long long context_key, float* out_fx, float* out_fy, float* out_fz) {
+    RuntimeGuard guard;
     LockedContext locked_context(static_cast<jlong>(context_key), false);
     if (!locked_context.ctx) return 0;
     const ContextState& ctx = *locked_context.ctx;
@@ -10406,46 +10741,68 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_get_last_force(long long context_key, float* o
 }
 
 AERO_LBM_CAPI_EXPORT void aero_lbm_release_context(long long context_key) {
+    RuntimeGuard guard;
     native_release_context_impl(static_cast<jlong>(context_key));
 }
 
 AERO_LBM_CAPI_EXPORT void aero_lbm_shutdown(void) {
+    RuntimeGuard guard;
     native_shutdown_impl();
 }
 
 AERO_LBM_CAPI_EXPORT const char* aero_lbm_runtime_info(void) {
-    return g_cfg.runtime_info.empty() ? "uninitialized" : g_cfg.runtime_info.c_str();
+    thread_local std::string text;
+    RuntimeGuard guard;
+    text = g_cfg.runtime_info.empty() ? "uninitialized" : g_cfg.runtime_info;
+    return text.c_str();
 }
 
 AERO_LBM_CAPI_EXPORT const char* aero_lbm_last_error(void) {
+    thread_local std::string text;
+    RuntimeGuard guard;
     if (!g_last_native_error.empty()) {
-        return g_last_native_error.c_str();
+        text = g_last_native_error;
+        return text.c_str();
     }
 #if defined(AERO_LBM_OPENCL)
     if (!g_opencl.error.empty()) {
-        return g_opencl.error.c_str();
+        text = g_opencl.error;
+        return text.c_str();
     }
 #endif
-    return g_last_native_error.c_str();
+    text.clear();
+    return text.c_str();
 }
 
 AERO_LBM_CAPI_EXPORT const char* aero_lbm_timing_info(void) {
-    static std::string timing_text;
+    thread_local std::string timing_text;
+    RuntimeGuard guard;
     timing_text = timing_info_string();
     return timing_text.c_str();
 }
 
 AERO_LBM_CAPI_EXPORT const char* aero_lbm_memory_info(void) {
-    static std::string memory_text;
+    thread_local std::string memory_text;
+    RuntimeGuard guard;
     memory_text = memory_info_string();
     return memory_text.c_str();
 }
 
 AERO_LBM_CAPI_EXPORT void aero_lbm_reset_timing(void) {
+    RuntimeGuard guard;
     reset_timing_stats();
 }
 
+AERO_LBM_CAPI_EXPORT void aero_lbm_runtime_lock(void) {
+    runtime_mutex().lock();
+}
+
+AERO_LBM_CAPI_EXPORT void aero_lbm_runtime_unlock(void) {
+    runtime_mutex().unlock();
+}
+
 AERO_LBM_CAPI_EXPORT void aero_lbm_set_realtime_solver_mode(int solver_mode) {
+    RuntimeGuard guard;
     switch (solver_mode) {
         case AERO_LBM_REALTIME_SOLVER_AUTO:
         case AERO_LBM_REALTIME_SOLVER_CLASSIC_D3Q27:
@@ -10460,6 +10817,7 @@ AERO_LBM_CAPI_EXPORT void aero_lbm_set_realtime_solver_mode(int solver_mode) {
 }
 
 AERO_LBM_CAPI_EXPORT int aero_lbm_finish(void) {
+    RuntimeGuard guard;
 #if defined(AERO_LBM_OPENCL)
     clear_last_native_error();
     if (g_cfg.opencl_enabled && g_opencl.queue) {
@@ -10474,6 +10832,7 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_finish(void) {
 }
 
 AERO_LBM_CAPI_EXPORT int aero_lbm_get_timing_snapshot(AeroLbmTimingSnapshot* out_snapshot) {
+    RuntimeGuard guard;
     if (!out_snapshot) return 0;
     const double inv = g_timing.ticks == 0 ? 0.0 : 1.0 / static_cast<double>(g_timing.ticks);
     out_snapshot->ticks = g_timing.ticks;
@@ -10489,27 +10848,33 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_get_timing_snapshot(AeroLbmTimingSnapshot* out
 }
 
 AERO_LBM_CAPI_EXPORT void aero_lbm_benchmark_default_config(AeroLbmBenchmarkConfig* out_config) {
+    RuntimeGuard guard;
     native_benchmark_default_config_impl(out_config);
 }
 
 AERO_LBM_CAPI_EXPORT int aero_lbm_benchmark_default_preset_config(int preset, AeroLbmBenchmarkConfig* out_config) {
+    RuntimeGuard guard;
     return native_benchmark_default_preset_config_impl(preset, out_config) ? 1 : 0;
 }
 
 AERO_LBM_CAPI_EXPORT int aero_lbm_benchmark_set_config(const AeroLbmBenchmarkConfig* config) {
+    RuntimeGuard guard;
     return native_benchmark_set_config_impl(config) ? 1 : 0;
 }
 
 AERO_LBM_CAPI_EXPORT int aero_lbm_benchmark_get_config(AeroLbmBenchmarkConfig* out_config) {
+    RuntimeGuard guard;
     return native_benchmark_get_config_impl(out_config) ? 1 : 0;
 }
 
 AERO_LBM_CAPI_EXPORT void aero_lbm_benchmark_reset_config(void) {
+    RuntimeGuard guard;
     native_benchmark_reset_config_impl();
 }
 
 AERO_LBM_CAPI_EXPORT const char* aero_lbm_benchmark_info(void) {
-    static std::string benchmark_text;
+    thread_local std::string benchmark_text;
+    RuntimeGuard guard;
     benchmark_text = benchmark_info_string(g_benchmark_cfg);
     return benchmark_text.c_str();
 }
@@ -10517,124 +10882,317 @@ AERO_LBM_CAPI_EXPORT const char* aero_lbm_benchmark_info(void) {
 JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_client_NativeLbmBridge_nativeInit(
     JNIEnv*, jclass, jint grid_size, jint input_channels, jint output_channels
 ) {
+    RuntimeGuard guard;
     return native_init_impl(grid_size, input_channels, output_channels);
 }
 JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_runtime_NativeLbmBridge_nativeInit(
     JNIEnv*, jclass, jint grid_size, jint input_channels, jint output_channels
 ) {
+    RuntimeGuard guard;
     return native_init_impl(grid_size, input_channels, output_channels);
 }
 
 JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_client_NativeLbmBridge_nativeStep(
     JNIEnv* env, jclass clazz, jbyteArray payload, jint grid_size, jlong context_key, jfloatArray output_flow
 ) {
+    RuntimeGuard guard;
     return native_step_impl(env, clazz, payload, grid_size, context_key, output_flow);
 }
 JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_runtime_NativeLbmBridge_nativeStep(
     JNIEnv* env, jclass clazz, jbyteArray payload, jint grid_size, jlong context_key, jfloatArray output_flow
 ) {
+    RuntimeGuard guard;
     return native_step_impl(env, clazz, payload, grid_size, context_key, output_flow);
 }
 
 JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_client_NativeLbmBridge_nativeStepDirect(
     JNIEnv* env, jclass clazz, jobject payload, jint grid_size, jlong context_key, jfloatArray output_flow
 ) {
+    RuntimeGuard guard;
     return native_step_direct_impl(env, clazz, payload, grid_size, context_key, output_flow);
 }
 JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_runtime_NativeLbmBridge_nativeStepDirect(
     JNIEnv* env, jclass clazz, jobject payload, jint grid_size, jlong context_key, jfloatArray output_flow
 ) {
+    RuntimeGuard guard;
     return native_step_direct_impl(env, clazz, payload, grid_size, context_key, output_flow);
 }
 
 JNIEXPORT void JNICALL Java_com_aerodynamics4mc_client_NativeLbmBridge_nativeReleaseContext(JNIEnv*, jclass, jlong context_key) {
+    RuntimeGuard guard;
     native_release_context_impl(context_key);
 }
 JNIEXPORT void JNICALL Java_com_aerodynamics4mc_runtime_NativeLbmBridge_nativeReleaseContext(JNIEnv*, jclass, jlong context_key) {
+    RuntimeGuard guard;
     native_release_context_impl(context_key);
 }
 
 JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_client_NativeLbmBridge_nativeShiftContext(
     JNIEnv*, jclass, jint grid_size, jlong context_key, jint dx, jint dy, jint dz
 ) {
+    RuntimeGuard guard;
     return native_shift_context_impl(grid_size, context_key, dx, dy, dz);
 }
 JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_runtime_NativeLbmBridge_nativeShiftContext(
     JNIEnv*, jclass, jint grid_size, jlong context_key, jint dx, jint dy, jint dz
 ) {
+    RuntimeGuard guard;
     return native_shift_context_impl(grid_size, context_key, dx, dy, dz);
 }
 
 JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_client_NativeLbmBridge_nativeHasContext(
     JNIEnv*, jclass, jlong context_key
 ) {
+    RuntimeGuard guard;
     return native_has_context_impl(context_key);
 }
 JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_runtime_NativeLbmBridge_nativeHasContext(
     JNIEnv*, jclass, jlong context_key
 ) {
+    RuntimeGuard guard;
     return native_has_context_impl(context_key);
 }
 
 JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_client_NativeLbmBridge_nativeExchangeHalo(
     JNIEnv*, jclass, jint grid_size, jlong first_context_key, jlong second_context_key, jint offset_x, jint offset_y, jint offset_z
 ) {
+    RuntimeGuard guard;
     return native_exchange_halo_impl(grid_size, first_context_key, second_context_key, offset_x, offset_y, offset_z);
 }
 JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_runtime_NativeLbmBridge_nativeExchangeHalo(
     JNIEnv*, jclass, jint grid_size, jlong first_context_key, jlong second_context_key, jint offset_x, jint offset_y, jint offset_z
 ) {
+    RuntimeGuard guard;
     return native_exchange_halo_impl(grid_size, first_context_key, second_context_key, offset_x, offset_y, offset_z);
 }
 
 JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_client_NativeLbmBridge_nativeGetTemperatureState(
     JNIEnv* env, jclass clazz, jint grid_size, jlong context_key, jfloatArray temperature_state
 ) {
+    RuntimeGuard guard;
     return native_get_temperature_state_impl(env, clazz, grid_size, context_key, temperature_state);
 }
 JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_runtime_NativeLbmBridge_nativeGetTemperatureState(
     JNIEnv* env, jclass clazz, jint grid_size, jlong context_key, jfloatArray temperature_state
 ) {
+    RuntimeGuard guard;
     return native_get_temperature_state_impl(env, clazz, grid_size, context_key, temperature_state);
 }
 
 JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_client_NativeLbmBridge_nativeSetTemperatureState(
     JNIEnv* env, jclass clazz, jint grid_size, jlong context_key, jfloatArray temperature_state
 ) {
+    RuntimeGuard guard;
     return native_set_temperature_state_impl(env, clazz, grid_size, context_key, temperature_state);
 }
 JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_runtime_NativeLbmBridge_nativeSetTemperatureState(
     JNIEnv* env, jclass clazz, jint grid_size, jlong context_key, jfloatArray temperature_state
 ) {
+    RuntimeGuard guard;
     return native_set_temperature_state_impl(env, clazz, grid_size, context_key, temperature_state);
 }
 
 JNIEXPORT void JNICALL Java_com_aerodynamics4mc_client_NativeLbmBridge_nativeShutdown(JNIEnv*, jclass) {
+    RuntimeGuard guard;
     native_shutdown_impl();
 }
 JNIEXPORT void JNICALL Java_com_aerodynamics4mc_runtime_NativeLbmBridge_nativeShutdown(JNIEnv*, jclass) {
+    RuntimeGuard guard;
     native_shutdown_impl();
 }
 
 JNIEXPORT jstring JNICALL Java_com_aerodynamics4mc_client_NativeLbmBridge_nativeRuntimeInfo(JNIEnv* env, jclass) {
+    RuntimeGuard guard;
     return native_runtime_info_impl(env);
 }
 JNIEXPORT jstring JNICALL Java_com_aerodynamics4mc_runtime_NativeLbmBridge_nativeRuntimeInfo(JNIEnv* env, jclass) {
+    RuntimeGuard guard;
     return native_runtime_info_impl(env);
 }
 
 JNIEXPORT jstring JNICALL Java_com_aerodynamics4mc_client_NativeLbmBridge_nativeLastError(JNIEnv* env, jclass) {
+    RuntimeGuard guard;
     return native_last_error_impl(env);
 }
 JNIEXPORT jstring JNICALL Java_com_aerodynamics4mc_runtime_NativeLbmBridge_nativeLastError(JNIEnv* env, jclass) {
+    RuntimeGuard guard;
     return native_last_error_impl(env);
 }
 
 JNIEXPORT jstring JNICALL Java_com_aerodynamics4mc_client_NativeLbmBridge_nativeTimingInfo(JNIEnv* env, jclass) {
+    RuntimeGuard guard;
     return native_timing_info_impl(env);
 }
 JNIEXPORT jstring JNICALL Java_com_aerodynamics4mc_runtime_NativeLbmBridge_nativeTimingInfo(JNIEnv* env, jclass) {
+    RuntimeGuard guard;
     return native_timing_info_impl(env);
+}
+
+JNIEXPORT jlong JNICALL Java_com_aerodynamics4mc_runtime_NativeSimulationBridge_nativeCreateWindTunnelSolver(
+    JNIEnv*,
+    jclass,
+    jint nx,
+    jint ny,
+    jint nz,
+    jfloat dx_meters,
+    jfloat dt_seconds
+) {
+    clear_wind_tunnel_last_error();
+    if (nx <= 0 || ny <= 0 || nz <= 0
+        || !std::isfinite(dx_meters) || dx_meters <= 0.0f
+        || !std::isfinite(dt_seconds) || dt_seconds <= 0.0f) {
+        set_wind_tunnel_last_error("create_wind_tunnel_solver: invalid grid or timestep");
+        return 0L;
+    }
+    try {
+        long long handle = 0;
+        if (!aero_solver_create(
+                nx,
+                ny,
+                nz,
+                dx_meters,
+                dt_seconds,
+                &handle)) {
+            set_wind_tunnel_last_error(wind_tunnel_solver_error("create_wind_tunnel_solver"));
+            return 0L;
+        }
+        return static_cast<jlong>(handle);
+    } catch (const std::exception& exc) {
+        set_wind_tunnel_last_error(std::string("create_wind_tunnel_solver exception: ") + exc.what());
+        return 0L;
+    } catch (...) {
+        set_wind_tunnel_last_error("create_wind_tunnel_solver: unknown native exception");
+        return 0L;
+    }
+}
+
+JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_runtime_NativeSimulationBridge_nativeSetWindTunnelSolidMask(
+    JNIEnv* env,
+    jclass,
+    jlong solver_handle,
+    jbyteArray solid_mask
+) {
+    clear_wind_tunnel_last_error();
+    if (solver_handle == 0 || !solid_mask) {
+        set_wind_tunnel_last_error("set_wind_tunnel_solid_mask: missing solver handle or mask");
+        return JNI_FALSE;
+    }
+    const jsize length = env->GetArrayLength(solid_mask);
+    jboolean is_copy = JNI_FALSE;
+    jbyte* values = env->GetByteArrayElements(solid_mask, &is_copy);
+    if (!values) {
+        set_wind_tunnel_last_error("set_wind_tunnel_solid_mask: failed to pin Java byte array");
+        return JNI_FALSE;
+    }
+    const int ok = aero_solver_set_solid_mask(
+        static_cast<long long>(solver_handle),
+        reinterpret_cast<const std::uint8_t*>(values),
+        static_cast<int>(length)
+    );
+    env->ReleaseByteArrayElements(solid_mask, values, JNI_ABORT);
+    if (!ok) {
+        set_wind_tunnel_last_error(wind_tunnel_solver_error("set_wind_tunnel_solid_mask"));
+    }
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_runtime_NativeSimulationBridge_nativeAdvanceWindTunnel(
+    JNIEnv*,
+    jclass,
+    jlong solver_handle,
+    jint steps,
+    jfloat inlet_vx,
+    jfloat inlet_vy,
+    jfloat inlet_vz,
+    jfloat density,
+    jfloat viscosity
+) {
+    clear_wind_tunnel_last_error();
+    if (solver_handle == 0 || steps <= 0) {
+        set_wind_tunnel_last_error("advance_wind_tunnel: missing solver handle or non-positive step count");
+        return JNI_FALSE;
+    }
+    AeroBoundaryDesc boundary{};
+    aero_solver_default_boundary(&boundary);
+    boundary.mode = AERO_SOLVER_BOUNDARY_WIND_TUNNEL;
+    boundary.inlet_vx = inlet_vx;
+    boundary.inlet_vy = inlet_vy;
+    boundary.inlet_vz = inlet_vz;
+    boundary.density = density;
+    boundary.viscosity = viscosity;
+    const int ok = aero_solver_advance_wind_tunnel(
+        static_cast<long long>(solver_handle),
+        &boundary,
+        steps
+    );
+    if (!ok) {
+        set_wind_tunnel_last_error(wind_tunnel_solver_error("advance_wind_tunnel"));
+    }
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_runtime_NativeSimulationBridge_nativeComputeWindTunnelForceMoment(
+    JNIEnv* env,
+    jclass,
+    jlong solver_handle,
+    jfloat reference_x,
+    jfloat reference_y,
+    jfloat reference_z,
+    jfloatArray out_values
+) {
+    clear_wind_tunnel_last_error();
+    if (solver_handle == 0 || !out_values
+        || env->GetArrayLength(out_values) < AERO_SOLVER_FORCE_MOMENT_FLOATS) {
+        set_wind_tunnel_last_error("compute_wind_tunnel_force_moment: invalid solver handle or output buffer");
+        return JNI_FALSE;
+    }
+    const float reference[3] = {reference_x, reference_y, reference_z};
+    AeroForceMoment result{};
+    if (!aero_solver_compute_force_moment(static_cast<long long>(solver_handle), reference, &result)) {
+        set_wind_tunnel_last_error(wind_tunnel_solver_error("compute_wind_tunnel_force_moment"));
+        return JNI_FALSE;
+    }
+    const jfloat values[AERO_SOLVER_FORCE_MOMENT_FLOATS] = {
+        result.force[0],
+        result.force[1],
+        result.force[2],
+        result.moment[0],
+        result.moment[1],
+        result.moment[2],
+        result.center_of_pressure[0],
+        result.center_of_pressure[1],
+        result.center_of_pressure[2],
+        result.reference_point[0],
+        result.reference_point[1],
+        result.reference_point[2]
+    };
+    env->SetFloatArrayRegion(out_values, 0, AERO_SOLVER_FORCE_MOMENT_FLOATS, values);
+    return JNI_TRUE;
+}
+
+JNIEXPORT jstring JNICALL Java_com_aerodynamics4mc_runtime_NativeSimulationBridge_nativeWindTunnelLastError(
+    JNIEnv* env,
+    jclass
+) {
+    if (!g_wind_tunnel_last_error.empty()) {
+        return env->NewStringUTF(g_wind_tunnel_last_error.c_str());
+    }
+    const char* solver_error = aero_solver_last_error();
+    if (solver_error && solver_error[0] != '\0') {
+        return env->NewStringUTF(solver_error);
+    }
+    const char* lbm_error = aero_lbm_last_error();
+    return env->NewStringUTF(lbm_error ? lbm_error : "");
+}
+
+JNIEXPORT void JNICALL Java_com_aerodynamics4mc_runtime_NativeSimulationBridge_nativeDestroyWindTunnelSolver(
+    JNIEnv*,
+    jclass,
+    jlong solver_handle
+) {
+    if (solver_handle != 0) {
+        aero_solver_destroy(static_cast<long long>(solver_handle));
+    }
 }
 
 JNIEXPORT jfloatArray JNICALL Java_com_aerodynamics4mc_runtime_MesoscaleNativeBridge_nativeDeriveTransport(

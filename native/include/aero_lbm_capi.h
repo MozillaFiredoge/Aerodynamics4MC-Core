@@ -22,6 +22,7 @@ enum {
     AERO_LBM_SIMULATION_FLOW_STATE_CHANNELS = 4,
     AERO_LBM_SIMULATION_PACKED_ATLAS_CHANNELS = 4,
     AERO_LBM_SIMULATION_PLAYER_PROBE_CHANNELS = 6,
+    AERO_LBM_FORCE_MOMENT_FLOATS = 12,
     AERO_LBM_SIMULATION_BRICK_RUNTIME_STATUS_FIELDS = 8
 };
 
@@ -272,6 +273,19 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_copy_flow_temperature_subrect(
 );
 AERO_LBM_CAPI_EXPORT int aero_lbm_get_flow_state_rect(int nx, int ny, int nz, long long context_key, float* out_flow);
 AERO_LBM_CAPI_EXPORT int aero_lbm_set_temperature_state_rect(int nx, int ny, int nz, long long context_key, const float* temperature);
+AERO_LBM_CAPI_EXPORT int aero_lbm_compute_momentum_exchange_force_moment_rect(
+    int nx,
+    int ny,
+    int nz,
+    long long context_key,
+    const uint8_t* solid_mask,
+    float dx,
+    float dt,
+    float density,
+    const float* reference_point,
+    float* out_values,
+    int* out_surface_link_count
+);
 AERO_LBM_CAPI_EXPORT int aero_lbm_get_last_force(long long context_key, float* out_fx, float* out_fy, float* out_fz);
 AERO_LBM_CAPI_EXPORT void aero_lbm_release_context(long long context_key);
 AERO_LBM_CAPI_EXPORT void aero_lbm_shutdown(void);
@@ -280,6 +294,8 @@ AERO_LBM_CAPI_EXPORT const char* aero_lbm_last_error(void);
 AERO_LBM_CAPI_EXPORT const char* aero_lbm_timing_info(void);
 AERO_LBM_CAPI_EXPORT const char* aero_lbm_memory_info(void);
 AERO_LBM_CAPI_EXPORT void aero_lbm_reset_timing(void);
+AERO_LBM_CAPI_EXPORT void aero_lbm_runtime_lock(void);
+AERO_LBM_CAPI_EXPORT void aero_lbm_runtime_unlock(void);
 AERO_LBM_CAPI_EXPORT void aero_lbm_set_realtime_solver_mode(int solver_mode);
 AERO_LBM_CAPI_EXPORT int aero_lbm_finish(void);
 AERO_LBM_CAPI_EXPORT int aero_lbm_get_timing_snapshot(AeroLbmTimingSnapshot* out_snapshot);
