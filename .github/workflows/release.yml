@@ -148,6 +148,66 @@ jobs:
             done
           fi
 
+  api-maven-release:
+    name: Release API Maven
+    runs-on: ubuntu-latest
+    needs: build
+    if: vars.PUB_GITHUB_PAGES_MAVEN != 'false'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: 25
+          distribution: 'microsoft'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: wrapper
+
+      - name: Publish API to local Pages Maven repo
+        run: ./gradlew :api:publishMavenJavaPublicationToGitHubPagesRepository --stacktrace
+
+      - name: Push Maven repo to gh-pages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          PAGES_DIR="$(mktemp -d)"
+          REPO_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            git clone --depth=1 --branch gh-pages "$REPO_URL" "$PAGES_DIR"
+          else
+            git init "$PAGES_DIR"
+            git -C "$PAGES_DIR" checkout -b gh-pages
+            git -C "$PAGES_DIR" remote add origin "$REPO_URL"
+          fi
+
+          mkdir -p "$PAGES_DIR/maven"
+          rsync -a --delete build/github-pages-maven/maven/ "$PAGES_DIR/maven/"
+          touch "$PAGES_DIR/.nojekyll"
+
+          git -C "$PAGES_DIR" add .nojekyll maven
+          if git -C "$PAGES_DIR" diff --cached --quiet; then
+            echo "No API Maven changes to publish."
+          else
+            git -C "$PAGES_DIR" commit -m "Publish Aerodynamics4MC API Maven ${GITHUB_REF_NAME}"
+            git -C "$PAGES_DIR" push origin gh-pages
+          fi
+
   platform-release:
     name: Release to Platforms
     runs-on: ubuntu-latest

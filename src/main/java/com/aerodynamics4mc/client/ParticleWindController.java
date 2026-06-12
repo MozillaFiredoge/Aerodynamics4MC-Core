@@ -1,7 +1,7 @@
 package com.aerodynamics4mc.client;
 
 import com.aerodynamics4mc.api.SamplePolicy;
-import com.aerodynamics4mc.api.client.AeroClientWindApi;
+import com.aerodynamics4mc.api.client.minecraft.AeroMinecraftClientWindApi;
 
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.util.Mth;
@@ -66,7 +66,7 @@ public final class ParticleWindController {
     }
 
     private static Vec3 sampleWind(ClientLevel world, double x, double y, double z) {
-        return AeroClientWindApi.sample(world, new Vec3(x, y, z), SamplePolicy.CLIENT_LOCAL_PREFERRED).effectiveVelocity();
+        return AeroMinecraftClientWindApi.sampleEffectiveVelocity(world, new Vec3(x, y, z), SamplePolicy.CLIENT_LOCAL_PREFERRED);
     }
 
     private static Vec3 applyHorizontalResponse(Vec3 velocity, Vec3 wind, double response, double maxHorizontalSpeed) {

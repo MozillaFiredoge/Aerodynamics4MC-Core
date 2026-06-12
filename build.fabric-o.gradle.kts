@@ -109,6 +109,9 @@ configurations.all {
 }
 
 dependencies {
+	implementation(project(":api"))
+	include(project(":api"))
+
 	minecraft("com.mojang:minecraft:${prop("deps.minecraft")}")
 	mappings(
 		loom.layered {

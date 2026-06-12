@@ -2,7 +2,8 @@ package com.aerodynamics4mc.client;
 
 import com.aerodynamics4mc.api.AeroWindSample;
 import com.aerodynamics4mc.api.SamplePolicy;
-import com.aerodynamics4mc.api.client.AeroClientWindApi;
+import com.aerodynamics4mc.api.client.minecraft.AeroMinecraftClientWindApi;
+import com.aerodynamics4mc.api.minecraft.AeroMinecraftVectors;
 import com.aerodynamics4mc.particle.ModParticles;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -168,7 +169,7 @@ public final class ClientWindPresenceManager {
     }
 
     private void sampleWind(ClientLevel world, Vec3 cameraPos) {
-        AeroWindSample sample = AeroClientWindApi.sample(world, cameraPos.add(0.0, 0.7, 0.0), SamplePolicy.CLIENT_LOCAL_PREFERRED);
+        AeroWindSample sample = AeroMinecraftClientWindApi.sample(world, cameraPos.add(0.0, 0.7, 0.0), SamplePolicy.CLIENT_LOCAL_PREFERRED);
         if (!sample.hasFlow()) {
             Vec3 cinematicWind = ClientCinematicWind.stormWind(world, cameraPos, stormVisualIntensity, 1.10, 5.60);
             if (horizontalLength(cinematicWind) > 0.10) {
@@ -189,7 +190,7 @@ public final class ClientWindPresenceManager {
             return;
         }
 
-        Vec3 effective = sample.effectiveVelocity();
+        Vec3 effective = AeroMinecraftVectors.effectiveVelocity(sample);
         Vec3 target = new Vec3(
                 finiteClamp(effective.x, -MAX_VISUAL_WIND_METERS_PER_SECOND, MAX_VISUAL_WIND_METERS_PER_SECOND),
                 0.0,
@@ -201,14 +202,15 @@ public final class ClientWindPresenceManager {
                 Mth.lerp(0.26, smoothedWind.z, target.z)
         );
 
-        float gustSpeed = (float) horizontalLength(sample.gustVelocity());
+        Vec3 gust = AeroMinecraftVectors.gustVelocity(sample);
+        float gustSpeed = (float) horizontalLength(gust);
         float gustRise = gustSpeed - lastGustSpeed;
         if (gustRise > 0.24f && horizontalLength(smoothedWind) > 1.0) {
-            triggerGustPulse(smoothedWind.add(sample.gustVelocity()), gustSpeed);
+            triggerGustPulse(smoothedWind.add(gust), gustSpeed);
         } else if (stormVisualIntensity > 0.45f
                 && horizontalLength(smoothedWind) > 1.25
                 && random.nextFloat() < stormVisualIntensity * 0.035f) {
-            triggerGustPulse(smoothedWind.add(sample.gustVelocity()), Math.max(gustSpeed, 1.0f + stormVisualIntensity * 2.0f));
+            triggerGustPulse(smoothedWind.add(gust), Math.max(gustSpeed, 1.0f + stormVisualIntensity * 2.0f));
         }
         lastGustSpeed = gustSpeed;
     }

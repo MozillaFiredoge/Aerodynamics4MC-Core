@@ -6,6 +6,9 @@ import com.aerodynamics4mc.api.A4mcVec3;
 import com.aerodynamics4mc.api.A4mcWorldRef;
 import com.aerodynamics4mc.api.AeroWindSample;
 import com.aerodynamics4mc.api.SamplePolicy;
+import com.aerodynamics4mc.api.client.AeroClientWindApi;
+import com.aerodynamics4mc.api.client.AeroClientWindRuntimeProvider;
+import com.aerodynamics4mc.api.minecraft.AeroMinecraftVectors;
 import com.aerodynamics4mc.network.packet.AeroClientL2PreferencePacket;
 import com.aerodynamics4mc.network.packet.AeroCoarseWindPacket;
 import com.aerodynamics4mc.network.packet.AeroFlowAnalysisPacket;
@@ -27,7 +30,7 @@ import net.neoforged.neoforge.network.handling.IPayloadContext;
 //?}
 
 @Getter
-public final class AeroClientMod {
+public final class AeroClientMod implements AeroClientWindRuntimeProvider {
 
 	private static AeroClientMod instance = null;
 	private final AeroVisualizer visualizer = new AeroVisualizer();
@@ -40,7 +43,7 @@ public final class AeroClientMod {
 	public final ClientL2Solver clientL2Solver = new ClientL2Solver(visualizer);
 
 	private AeroClientMod() {
-		// private constructor
+		AeroClientWindApi.registerProvider(this);
 	}
 
 	public static synchronized AeroClientMod getInstance() {
@@ -165,8 +168,13 @@ public final class AeroClientMod {
 		return active.visualizer.sampleFlow(toMinecraftId(world.dimensionId()), toMinecraftVector(position), policy);
 	}
 
+	@Override
+	public AeroWindSample sample(A4mcWorldRef world, A4mcVec3 position, SamplePolicy policy) {
+		return policy == null ? sampleFlow(world, position) : sampleFlow(world, position, policy);
+	}
+
 	public static Vec3 sampleWind(ClientLevel world, Vec3 position) {
-		return sampleFlow(world, position).velocity();
+		return AeroMinecraftVectors.velocity(sampleFlow(world, position));
 	}
 
 	public static A4mcVec3 sampleWind(A4mcWorldRef world, A4mcVec3 position) {

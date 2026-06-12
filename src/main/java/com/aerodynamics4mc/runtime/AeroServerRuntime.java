@@ -6,10 +6,13 @@ import com.aerodynamics4mc.api.A4mcId;
 import com.aerodynamics4mc.api.A4mcPlayerRef;
 import com.aerodynamics4mc.api.A4mcVec3;
 import com.aerodynamics4mc.api.A4mcWorldRef;
+import com.aerodynamics4mc.api.AeroWindApi;
+import com.aerodynamics4mc.api.AeroWindRuntimeProvider;
 import com.aerodynamics4mc.api.AeroWindSample;
 import com.aerodynamics4mc.api.AeroWindSamplingRules;
 import com.aerodynamics4mc.api.GameplayWindSample;
 import com.aerodynamics4mc.api.SamplePolicy;
+import com.aerodynamics4mc.api.minecraft.AeroMinecraftVectors;
 import com.aerodynamics4mc.block.ModBlocks;
 import com.aerodynamics4mc.flow.AnalysisFlowCodec;
 import com.aerodynamics4mc.network.packet.AeroCoarseWindPacket;
@@ -407,7 +410,49 @@ public final class AeroServerRuntime {
 	public final long[] maxCallbackLockHeldNanos = new long[CALLBACK_PHASE_NAMES.length];
 
 	private AeroServerRuntime() {
-		// private constructor
+		AeroWindApi.registerProvider(new RuntimeProvider());
+	}
+
+	private static final class RuntimeProvider implements AeroWindRuntimeProvider {
+		@Override
+		public AeroWindSample sample(A4mcWorldRef world, A4mcVec3 position, SamplePolicy policy) {
+			return policy == null ? sampleFlow(world, position) : sampleFlow(world, position, policy);
+		}
+
+		@Override
+		public AeroWindSample sample(A4mcWorldRef world, A4mcBlockPos position, SamplePolicy policy) {
+			return policy == null ? sampleFlow(world, position) : sampleFlow(world, position, policy);
+		}
+
+		@Override
+		public AeroWindSample sample(A4mcPlayerRef player, A4mcVec3 position, SamplePolicy policy) {
+			return policy == null ? sampleFlow(player, position) : sampleFlow(player, position, policy);
+		}
+
+		@Override
+		public AeroWindSample sample(A4mcPlayerRef player, A4mcBlockPos position, SamplePolicy policy) {
+			return policy == null ? sampleFlow(player, position) : sampleFlow(player, position, policy);
+		}
+
+		@Override
+		public GameplayWindSample sampleGameplay(A4mcWorldRef world, A4mcVec3 position, SamplePolicy policy) {
+			return policy == null ? AeroServerRuntime.sampleGameplay(world, position) : AeroServerRuntime.sampleGameplay(world, position, policy);
+		}
+
+		@Override
+		public GameplayWindSample sampleGameplay(A4mcWorldRef world, A4mcBlockPos position, SamplePolicy policy) {
+			return policy == null ? AeroServerRuntime.sampleGameplay(world, position) : AeroServerRuntime.sampleGameplay(world, position, policy);
+		}
+
+		@Override
+		public GameplayWindSample sampleGameplay(A4mcPlayerRef player, A4mcVec3 position, SamplePolicy policy) {
+			return policy == null ? AeroServerRuntime.sampleGameplay(player, position) : AeroServerRuntime.sampleGameplay(player, position, policy);
+		}
+
+		@Override
+		public GameplayWindSample sampleGameplay(A4mcPlayerRef player, A4mcBlockPos position, SamplePolicy policy) {
+			return policy == null ? AeroServerRuntime.sampleGameplay(player, position) : AeroServerRuntime.sampleGameplay(player, position, policy);
+		}
 	}
 
 	public static void notifyBlockStateChanged(ServerLevel world, BlockPos pos, BlockState oldState, BlockState newState) {
@@ -734,7 +779,7 @@ public final class AeroServerRuntime {
 	private static SamplePolicy effectiveSamplePolicyForPlayer(ServerPlayer player, SamplePolicy policy) {
 		SamplePolicy effectivePolicy = policy == null ? SamplePolicy.SERVER_COARSE_ONLY : policy;
 		if (effectivePolicy != SamplePolicy.DIAGNOSTIC_ALL_SOURCES
-				&& AeroWindSamplingRules.isFastPlayerVelocity(player.getDeltaMovement())) {
+				&& AeroMinecraftVectors.isFastPlayerVelocity(player.getDeltaMovement())) {
 			return SamplePolicy.SERVER_COARSE_ONLY;
 		}
 		return effectivePolicy;
@@ -6355,7 +6400,7 @@ public final class AeroServerRuntime {
 		if (!coarse.hasFlow()) {
 			return 0.0f;
 		}
-		return (float) coarse.velocity().length();
+		return (float) AeroMinecraftVectors.velocity(coarse).length();
 	}
 
 	private boolean shouldSuppressZeroBrickAtlas(WindowKey key, BrickRuntimeAtlasSnapshot atlas) {
@@ -6953,7 +6998,7 @@ public final class AeroServerRuntime {
 	}
 
 	private boolean isFastPlayerForL2(ServerPlayer player) {
-		return player != null && AeroWindSamplingRules.isFastPlayerVelocity(player.getDeltaMovement());
+		return player != null && AeroMinecraftVectors.isFastPlayerVelocity(player.getDeltaMovement());
 	}
 
 	private List<ServerPlayer> playersInsideFlowAtlas(ServerLevel world, BrickRuntimeAtlasSnapshot atlas) {

@@ -1,7 +1,5 @@
 package com.aerodynamics4mc.api;
 
-import net.minecraft.world.phys.Vec3;
-
 public final class AeroWindSamplingRules {
     public static final float FAST_PLAYER_HORIZONTAL_SPEED_THRESHOLD_MPS = 7.0f;
 
@@ -12,22 +10,11 @@ public final class AeroWindSamplingRules {
         return horizontalSpeedMetersPerSecond(velocity) > FAST_PLAYER_HORIZONTAL_SPEED_THRESHOLD_MPS;
     }
 
-    public static boolean isFastPlayerVelocity(Vec3 velocity) {
-        return horizontalSpeedMetersPerSecond(velocity) > FAST_PLAYER_HORIZONTAL_SPEED_THRESHOLD_MPS;
-    }
-
     public static float horizontalSpeedMetersPerSecond(A4mcVec3 velocity) {
         if (velocity == null) {
             return 0.0f;
         }
         return horizontalSpeedMetersPerSecond(velocity.x(), velocity.z());
-    }
-
-    public static float horizontalSpeedMetersPerSecond(Vec3 velocity) {
-        if (velocity == null) {
-            return 0.0f;
-        }
-        return horizontalSpeedMetersPerSecond(velocity.x, velocity.z);
     }
 
     private static float horizontalSpeedMetersPerSecond(double x, double z) {

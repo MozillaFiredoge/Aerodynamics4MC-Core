@@ -3,6 +3,7 @@ package com.aerodynamics4mc.client;
 import com.aerodynamics4mc.ModTemplate;
 import com.aerodynamics4mc.api.AeroWindSample;
 import com.aerodynamics4mc.api.SamplePolicy;
+import com.aerodynamics4mc.api.minecraft.AeroMinecraftVectors;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -154,8 +155,8 @@ public final class ClientWindAmbienceManager {
             return;
         }
 
-        Vec3 effectiveWind = sample.effectiveVelocity();
-        Vec3 gust = sample.gustVelocity();
+        Vec3 effectiveWind = AeroMinecraftVectors.effectiveVelocity(sample);
+        Vec3 gust = AeroMinecraftVectors.gustVelocity(sample);
         float meanSpeed = sample.horizontalSpeedMetersPerSecond();
         float turbulence = Mth.clamp(sample.turbulenceIntensity() / 3.0f, 0.0f, 1.0f);
         applyWindTargets(minecraft, player, effectiveWind, gust, meanSpeed, turbulence);

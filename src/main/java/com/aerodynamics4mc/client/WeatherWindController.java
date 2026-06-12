@@ -2,7 +2,8 @@ package com.aerodynamics4mc.client;
 
 import com.aerodynamics4mc.api.AeroWindSample;
 import com.aerodynamics4mc.api.SamplePolicy;
-import com.aerodynamics4mc.api.client.AeroClientWindApi;
+import com.aerodynamics4mc.api.client.minecraft.AeroMinecraftClientWindApi;
+import com.aerodynamics4mc.api.minecraft.AeroMinecraftVectors;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.util.Mth;
@@ -49,8 +50,8 @@ public final class WeatherWindController {
         }
         lastSampleTick = gameTime;
 
-        AeroWindSample sample = AeroClientWindApi.sample(world, cameraPosition, SamplePolicy.SERVER_COARSE_ONLY);
-        Vec3 wind = sample.hasFlow() ? sample.effectiveVelocity() : Vec3.ZERO;
+        AeroWindSample sample = AeroMinecraftClientWindApi.sample(world, cameraPosition, SamplePolicy.SERVER_COARSE_ONLY);
+        Vec3 wind = sample.hasFlow() ? AeroMinecraftVectors.effectiveVelocity(sample) : Vec3.ZERO;
         float targetX = finiteClamp((float) wind.x, -MAX_WEATHER_WIND_METERS_PER_SECOND, MAX_WEATHER_WIND_METERS_PER_SECOND);
         float targetZ = finiteClamp((float) wind.z, -MAX_WEATHER_WIND_METERS_PER_SECOND, MAX_WEATHER_WIND_METERS_PER_SECOND);
         smoothedWindX = Mth.lerp(WIND_SMOOTHING, smoothedWindX, targetX);

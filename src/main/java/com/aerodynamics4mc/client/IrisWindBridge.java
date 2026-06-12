@@ -2,7 +2,7 @@ package com.aerodynamics4mc.client;
 
 import com.aerodynamics4mc.ModTemplate;
 import com.aerodynamics4mc.api.SamplePolicy;
-import com.aerodynamics4mc.api.client.AeroClientWindApi;
+import com.aerodynamics4mc.api.client.minecraft.AeroMinecraftClientWindApi;
 import com.mojang.blaze3d.platform.NativeImage;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.DynamicTexture;
@@ -193,11 +193,11 @@ public final class IrisWindBridge {
             double worldY = originY + (y + 0.5) * CELL_SIZE_BLOCKS;
             double worldZ = originZ + (z + 0.5) * CELL_SIZE_BLOCKS;
             Vec3 sampledWind = streamingEnabled
-                    ? AeroClientWindApi.sample(
+                    ? AeroMinecraftClientWindApi.sampleEffectiveVelocity(
                     client.level,
                     new Vec3(worldX, worldY, worldZ),
                     SamplePolicy.CLIENT_LOCAL_PREFERRED
-            ).effectiveVelocity()
+            )
                     : Vec3.ZERO;
             targetWindField[windBase] = (float) sampledWind.x;
             targetWindField[windBase + 1] = (float) sampledWind.y;

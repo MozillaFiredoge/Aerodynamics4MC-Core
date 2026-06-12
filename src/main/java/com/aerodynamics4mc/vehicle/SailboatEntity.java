@@ -1,7 +1,8 @@
 package com.aerodynamics4mc.vehicle;
 
-import com.aerodynamics4mc.api.AeroWindApi;
 import com.aerodynamics4mc.api.GameplayWindSample;
+import com.aerodynamics4mc.api.minecraft.AeroMinecraftVectors;
+import com.aerodynamics4mc.api.minecraft.AeroMinecraftWindApi;
 import com.aerodynamics4mc.block.ModBlocks;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
@@ -82,8 +83,8 @@ public class SailboatEntity extends Boat {
     }
 
     private void updateServerSailingWind(ServerLevel serverLevel) {
-        GameplayWindSample wind = AeroWindApi.sampleGameplay(serverLevel, position());
-        Vec3 targetWind = wind.hasFlow() ? wind.meanVelocity() : Vec3.ZERO;
+        GameplayWindSample wind = AeroMinecraftWindApi.sampleGameplay(serverLevel, position());
+        Vec3 targetWind = wind.hasFlow() ? AeroMinecraftVectors.meanVelocity(wind) : Vec3.ZERO;
         setSailingWindMetersPerSecond(SailingPhysics.smoothWind(sailingWindMetersPerSecond(), targetWind));
     }
 

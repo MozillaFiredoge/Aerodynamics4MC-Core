@@ -3,6 +3,7 @@ package com.aerodynamics4mc.client;
 import com.aerodynamics4mc.api.AeroWindSample;
 import com.aerodynamics4mc.api.AeroWindSamplingRules;
 import com.aerodynamics4mc.api.SamplePolicy;
+import com.aerodynamics4mc.api.minecraft.AeroMinecraftVectors;
 import com.aerodynamics4mc.flow.AnalysisFlowCodec;
 import com.aerodynamics4mc.network.packet.AeroCoarseWindPacket;
 import com.aerodynamics4mc.network.packet.AeroFlowAnalysisPacket;
@@ -210,7 +211,7 @@ public final class AeroVisualizer {
         if (effectivePolicy != SamplePolicy.DIAGNOSTIC_ALL_SOURCES
                 && client != null
                 && client.player != null
-                && AeroWindSamplingRules.isFastPlayerVelocity(client.player.getDeltaMovement())) {
+                && AeroMinecraftVectors.isFastPlayerVelocity(client.player.getDeltaMovement())) {
             return SamplePolicy.SERVER_COARSE_ONLY;
         }
         return effectivePolicy;
@@ -225,7 +226,7 @@ public final class AeroVisualizer {
     }
 
     Vec3 sampleWind(Identifier dimensionId, Vec3 position) {
-        return sampleFlow(dimensionId, position).velocity();
+        return AeroMinecraftVectors.velocity(sampleFlow(dimensionId, position));
     }
 
     private RemoteFlowField findNewestRemoteField(Identifier dimensionId, Vec3 position) {

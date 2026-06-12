@@ -2,6 +2,7 @@ package com.aerodynamics4mc.client;
 
 import com.aerodynamics4mc.api.AeroWindSample;
 import com.aerodynamics4mc.api.AeroWindSamplingRules;
+import com.aerodynamics4mc.api.minecraft.AeroMinecraftVectors;
 import com.aerodynamics4mc.block.FanBlock;
 import com.aerodynamics4mc.block.ModBlocks;
 import com.aerodynamics4mc.network.packet.AeroCoarseWindPacket;
@@ -572,7 +573,7 @@ public final class ClientL2Solver {
         }
         lastProcessedClientGameTime = clientGameTime;
 
-        float horizontalSpeed = AeroWindSamplingRules.horizontalSpeedMetersPerSecond(client.player.getDeltaMovement());
+        float horizontalSpeed = AeroMinecraftVectors.horizontalSpeedMetersPerSecond(client.player.getDeltaMovement());
         if (shouldSuspendForFastMovement(horizontalSpeed, clientGameTime)) {
             suspendForFastMovement(clientGameTime);
             return;
@@ -1447,7 +1448,7 @@ public final class ClientL2Solver {
                 flowState[base + 1] = coarse.velocityY() / NATIVE_VELOCITY_SCALE;
                 flowState[base + 2] = coarse.velocityZ() / NATIVE_VELOCITY_SCALE;
                 flowState[base + 3] = coarse.pressure();
-                float speed = (float) coarse.velocity().length();
+                float speed = (float) AeroMinecraftVectors.velocity(coarse).length();
                 if (Float.isFinite(speed) && speed > boundaryRefreshMaxCoarseSpeed) {
                     boundaryRefreshMaxCoarseSpeed = speed;
                 }
@@ -2086,7 +2087,7 @@ public final class ClientL2Solver {
                     flowState[base + 1] = coarse.velocityY() / NATIVE_VELOCITY_SCALE;
                     flowState[base + 2] = coarse.velocityZ() / NATIVE_VELOCITY_SCALE;
                     flowState[base + 3] = coarse.pressure();
-                    float speed = (float) coarse.velocity().length();
+                    float speed = (float) AeroMinecraftVectors.velocity(coarse).length();
                     if (Float.isFinite(speed) && speed > maxCoarseSpeed) {
                         maxCoarseSpeed = speed;
                     }

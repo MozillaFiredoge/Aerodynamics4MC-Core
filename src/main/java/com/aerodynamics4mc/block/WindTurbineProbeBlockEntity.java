@@ -1,8 +1,8 @@
 package com.aerodynamics4mc.block;
 
-import com.aerodynamics4mc.api.AeroWindApi;
 import com.aerodynamics4mc.api.GameplayWindSample;
 import com.aerodynamics4mc.api.SamplePolicy;
+import com.aerodynamics4mc.api.minecraft.AeroMinecraftWindApi;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
@@ -42,7 +42,7 @@ public class WindTurbineProbeBlockEntity extends BlockEntity {
 
     public void sampleNow(ServerLevel world, BlockState state) {
         Vec3 samplePos = new Vec3(worldPosition.getX() + 0.5, worldPosition.getY() + 1.5, worldPosition.getZ() + 0.5);
-        GameplayWindSample sample = AeroWindApi.sampleGameplay(world, samplePos, SamplePolicy.GAMEPLAY_SERVER_ONLY);
+        GameplayWindSample sample = AeroMinecraftWindApi.sampleGameplay(world, samplePos, SamplePolicy.GAMEPLAY_SERVER_ONLY);
         int previousPower = redstonePower;
         lastSample = sample;
         lastSampleTick = world.getGameTime();

@@ -1,6 +1,7 @@
 package com.aerodynamics4mc.block;
 
 import com.aerodynamics4mc.api.GameplayWindSample;
+import com.aerodynamics4mc.api.minecraft.AeroMinecraftVectors;
 import com.mojang.serialization.MapCodec;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
@@ -100,7 +101,7 @@ public class WindVaneBlock extends BaseEntityBlock {
                         "message.aerodynamics4mc.wind_vane.status",
                         directionComponent(vane.lastDirection()),
                         format(sample.effectiveSpeedMetersPerSecond()),
-                        format(sample.gustVelocity().length())
+                        format(AeroMinecraftVectors.gustVelocity(sample).length())
                 ).withStyle(ChatFormatting.AQUA),
                 false
         );

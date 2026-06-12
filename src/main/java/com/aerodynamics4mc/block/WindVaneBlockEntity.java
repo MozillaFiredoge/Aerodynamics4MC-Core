@@ -1,8 +1,9 @@
 package com.aerodynamics4mc.block;
 
-import com.aerodynamics4mc.api.AeroWindApi;
 import com.aerodynamics4mc.api.GameplayWindSample;
 import com.aerodynamics4mc.api.SamplePolicy;
+import com.aerodynamics4mc.api.minecraft.AeroMinecraftVectors;
+import com.aerodynamics4mc.api.minecraft.AeroMinecraftWindApi;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
@@ -36,7 +37,7 @@ public class WindVaneBlockEntity extends BlockEntity {
 
     public void sampleNow(ServerLevel world, BlockState state) {
         Vec3 samplePos = new Vec3(worldPosition.getX() + 0.5, worldPosition.getY() + 1.4, worldPosition.getZ() + 0.5);
-        GameplayWindSample sample = AeroWindApi.sampleGameplay(world, samplePos, SamplePolicy.GAMEPLAY_SERVER_ONLY);
+        GameplayWindSample sample = AeroMinecraftWindApi.sampleGameplay(world, samplePos, SamplePolicy.GAMEPLAY_SERVER_ONLY);
         lastSample = sample;
         lastSampleTick = world.getGameTime();
         if (!sample.hasFlow()) {
@@ -44,7 +45,7 @@ public class WindVaneBlockEntity extends BlockEntity {
             return;
         }
 
-        Vec3 effective = sample.effectiveVelocity();
+        Vec3 effective = AeroMinecraftVectors.effectiveVelocity(sample);
         double horizontalSpeed = Math.sqrt(effective.x * effective.x + effective.z * effective.z);
         if (!(horizontalSpeed >= CALM_HORIZONTAL_SPEED_MPS)) {
             setChanged();

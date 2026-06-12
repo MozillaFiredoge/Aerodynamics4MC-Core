@@ -1,8 +1,9 @@
 package com.aerodynamics4mc.block;
 
-import com.aerodynamics4mc.api.AeroWindApi;
 import com.aerodynamics4mc.api.GameplayWindSample;
 import com.aerodynamics4mc.api.SamplePolicy;
+import com.aerodynamics4mc.api.minecraft.AeroMinecraftVectors;
+import com.aerodynamics4mc.api.minecraft.AeroMinecraftWindApi;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
@@ -66,7 +67,7 @@ public final class WindMeterItem extends Item {
 		}
 
 		Vec3 samplePos = new Vec3(user.getX(), user.getY() + 1.2, user.getZ());
-		GameplayWindSample sample = AeroWindApi.sampleGameplay(serverPlayer, samplePos, SamplePolicy.GAMEPLAY_SERVER_ONLY);
+		GameplayWindSample sample = AeroMinecraftWindApi.sampleGameplay(serverPlayer, samplePos, SamplePolicy.GAMEPLAY_SERVER_ONLY);
 		user.getCooldowns().addCooldown(user.getItemInHand(hand), 10);
 
 		if (!sample.hasFlow()) {
@@ -74,9 +75,9 @@ public final class WindMeterItem extends Item {
 			return InteractionResult.SUCCESS;
 		}
 
-		Vec3 effective = sample.effectiveVelocity();
-		Vec3 mean = sample.meanVelocity();
-		Vec3 gust = sample.gustVelocity();
+		Vec3 effective = AeroMinecraftVectors.effectiveVelocity(sample);
+		Vec3 mean = AeroMinecraftVectors.meanVelocity(sample);
+		Vec3 gust = AeroMinecraftVectors.gustVelocity(sample);
 		Component direction = directionComponent((float) effective.x, (float) effective.z);
 		user.displayClientMessage(
 				Component.translatable(

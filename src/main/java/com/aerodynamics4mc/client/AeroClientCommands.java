@@ -2,6 +2,7 @@ package com.aerodynamics4mc.client;
 
 import com.aerodynamics4mc.ModTemplate;
 import com.aerodynamics4mc.api.SamplePolicy;
+import com.aerodynamics4mc.api.minecraft.AeroMinecraftVectors;
 import com.aerodynamics4mc.network.packet.AeroClientL2PreferencePacket;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.FloatArgumentType;
@@ -211,7 +212,7 @@ public class AeroClientCommands {
 					SamplePolicy.CLIENT_LOCAL_PREFERRED
 			);
 			return new AeroWindStatus(
-					(float) sample.effectiveVelocity().length(),
+					(float) AeroMinecraftVectors.effectiveVelocity(sample).length(),
 					sample.velocityX(),
 					sample.velocityY(),
 					sample.velocityZ(),

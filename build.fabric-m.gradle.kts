@@ -70,6 +70,9 @@ repositories {
 }
 
 dependencies {
+	implementation(project(":api"))
+	include(project(":api"))
+
 	minecraft("com.mojang:minecraft:${prop("deps.minecraft")}")
 	implementation("net.fabricmc:fabric-loader:${prop("deps.fabric-loader")}")
 	// implementation(libs.moulberry.mixinconstraints)

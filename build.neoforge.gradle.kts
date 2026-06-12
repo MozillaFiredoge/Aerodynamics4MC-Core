@@ -102,6 +102,9 @@ repositories {
 }
 
 dependencies {
+	implementation(project(":api"))
+	jarJar(project(":api"))
+
 	// implementation(libs.moulberry.mixinconstraints)
 	// jarJar(libs.moulberry.mixinconstraints)
 

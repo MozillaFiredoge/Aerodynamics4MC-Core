@@ -135,20 +135,47 @@ The preferred rendering uses a CFD‑style viridis colour map; the old glyph sty
 
 ## 🔌 Wind Sampling API (for Mod Developers)
 
-Other mods consume wind through `com.aerodynamics4mc.api`. No internal grid classes or packet formats are required.
+Other mods consume wind through the standalone `aerodynamics4mc-api` artifact. The API module is Minecraft-free: public signatures use stable `A4mc*` value types instead of Mojang/Yarn classes, so integrations are less sensitive to Minecraft or loader mapping changes.
+
+Add the GitHub Pages Maven repository:
+
+```kotlin
+repositories {
+    maven("https://mozillafiredoge.github.io/Aerodynamics4MC-Fabric/maven/")
+}
+```
+
+Depend on the API for compilation only. The main Aerodynamics4MC mod embeds and provides the API at runtime:
+
+```kotlin
+dependencies {
+    compileOnly("io.github.mozillafiredoge:aerodynamics4mc-api:0.2.0")
+}
+```
 
 **Server‑side sampling:**
 
 ```java
+import com.aerodynamics4mc.api.A4mcBlockPos;
+import com.aerodynamics4mc.api.A4mcId;
+import com.aerodynamics4mc.api.A4mcVec3;
+import com.aerodynamics4mc.api.A4mcWorldRef;
 import com.aerodynamics4mc.api.AeroWindApi;
 import com.aerodynamics4mc.api.GameplayWindSample;
 import com.aerodynamics4mc.api.SamplePolicy;
 
-GameplayWindSample wind = AeroWindApi.sampleGameplay(player, position, SamplePolicy.GAMEPLAY_SERVER_ONLY);
+A4mcWorldRef world = A4mcWorldRef.server(A4mcId.of("minecraft", "overworld"));
+A4mcBlockPos position = A4mcBlockPos.of(x, y, z);
+
+GameplayWindSample wind = AeroWindApi.sampleGameplay(
+    world,
+    position,
+    SamplePolicy.GAMEPLAY_SERVER_ONLY
+);
 
 if (wind.isTrustedForGameplay()) {
-    Vec3d mean = wind.meanVelocity();
-    Vec3d effective = wind.effectiveVelocity();
+    A4mcVec3 mean = wind.meanVelocityVector();
+    A4mcVec3 effective = wind.effectiveVelocityVector();
     float turbulence = wind.turbulenceIntensity();
 }
 ```
@@ -156,11 +183,22 @@ if (wind.isTrustedForGameplay()) {
 **Client‑side sampling (visuals):**
 
 ```java
-import com.aerodynamics4mc.api.AeroClientWindApi;
+import com.aerodynamics4mc.api.A4mcId;
+import com.aerodynamics4mc.api.A4mcVec3;
+import com.aerodynamics4mc.api.A4mcWorldRef;
+import com.aerodynamics4mc.api.AeroWindSample;
+import com.aerodynamics4mc.api.SamplePolicy;
+import com.aerodynamics4mc.api.client.AeroClientWindApi;
+
+A4mcWorldRef world = A4mcWorldRef.client(A4mcId.of("minecraft", "overworld"));
+A4mcVec3 position = A4mcVec3.of(x, y, z);
 
 AeroWindSample sample = AeroClientWindApi.sample(
-    clientWorld, position, SamplePolicy.CLIENT_LOCAL_PREFERRED);
-Vec3d visualDrift = sample.effectiveVelocity();
+    world,
+    position,
+    SamplePolicy.CLIENT_LOCAL_PREFERRED
+);
+A4mcVec3 visualDrift = sample.effectiveVelocityVector();
 ```
 
 **Recommended integration patterns:**
@@ -169,6 +207,7 @@ Vec3d visualDrift = sample.effectiveVelocity();
 - Built-in example → place a **Wind Turbine Probe** to see `GameplayWindSample` become redstone output.
 - Client particles (smoke, steam, dust) → `SamplePolicy.CLIENT_LOCAL_PREFERRED`.
 - Engineering overlays and diagnostics → `AeroWindApi.sample(...)` + `SamplePolicy.VISUAL_LOCAL_FIRST`.
+- If your mod is intentionally tied to the same Aerodynamics4MC Minecraft build, the main mod also exposes `com.aerodynamics4mc.api.minecraft.*` bridge helpers for Minecraft `Level`, `Player`, `BlockPos`, and `Vec3`. Cross-version integrations should prefer the pure `A4mc*` API.
 
 Full API contract: [`docs/wind-sampling-api.md`](docs/wind-sampling-api.md)
 

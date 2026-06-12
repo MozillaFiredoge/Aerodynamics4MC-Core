@@ -1,6 +1,7 @@
 package com.aerodynamics4mc.block;
 
 import com.aerodynamics4mc.api.GameplayWindSample;
+import com.aerodynamics4mc.api.minecraft.AeroMinecraftVectors;
 import com.mojang.serialization.MapCodec;
 
 import net.minecraft.ChatFormatting;
@@ -104,7 +105,7 @@ public class WindTurbineProbeBlock extends BaseEntityBlock {
                         "message.aerodynamics4mc.wind_turbine_probe.wind",
                         format(sample.effectiveSpeedMetersPerSecond()),
                         format(sample.meanSpeedMetersPerSecond()),
-                        format(sample.gustVelocity().length()),
+                        format(AeroMinecraftVectors.gustVelocity(sample).length()),
                         signed(sample.updraftMetersPerSecond())
                 ).withStyle(ChatFormatting.AQUA),
                 false

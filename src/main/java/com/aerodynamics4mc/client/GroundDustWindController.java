@@ -2,7 +2,8 @@ package com.aerodynamics4mc.client;
 
 import com.aerodynamics4mc.api.AeroWindSample;
 import com.aerodynamics4mc.api.SamplePolicy;
-import com.aerodynamics4mc.api.client.AeroClientWindApi;
+import com.aerodynamics4mc.api.client.minecraft.AeroMinecraftClientWindApi;
+import com.aerodynamics4mc.api.minecraft.AeroMinecraftVectors;
 import com.aerodynamics4mc.particle.ModParticles;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -90,8 +91,8 @@ public final class GroundDustWindController {
     }
 
     private Vec3 sampleHorizontalWind(ClientLevel world, Vec3 cameraPosition) {
-        AeroWindSample sample = AeroClientWindApi.sample(world, cameraPosition, SamplePolicy.CLIENT_LOCAL_PREFERRED);
-        Vec3 target = sample.hasFlow() ? sample.effectiveVelocity() : cinematicStormWind(world, cameraPosition);
+        AeroWindSample sample = AeroMinecraftClientWindApi.sample(world, cameraPosition, SamplePolicy.CLIENT_LOCAL_PREFERRED);
+        Vec3 target = sample.hasFlow() ? AeroMinecraftVectors.effectiveVelocity(sample) : cinematicStormWind(world, cameraPosition);
         double targetX = finiteClamp(target.x, -MAX_DUST_WIND_METERS_PER_SECOND, MAX_DUST_WIND_METERS_PER_SECOND);
         double targetZ = finiteClamp(target.z, -MAX_DUST_WIND_METERS_PER_SECOND, MAX_DUST_WIND_METERS_PER_SECOND);
         this.smoothedWind = new Vec3(
