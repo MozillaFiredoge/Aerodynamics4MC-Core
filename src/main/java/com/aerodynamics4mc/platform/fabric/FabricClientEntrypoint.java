@@ -14,14 +14,18 @@ import com.aerodynamics4mc.network.packet.AeroMesoscaleMapPacket;
 import com.aerodynamics4mc.network.packet.AeroRuntimeStatePacket;
 import com.aerodynamics4mc.particle.ModParticles;
 import com.aerodynamics4mc.client.WindDriftParticle;
+import com.aerodynamics4mc.vehicle.ModEntities;
 import com.github.razorplay.packet_handler.network.IPacket;
 import dev.kikugie.fletching_table.annotation.fabric.Entrypoint;
+import net.minecraft.client.model.geom.ModelLayers;
+import net.minecraft.client.renderer.entity.BoatRenderer;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.particle.v1.ParticleFactoryRegistry;
+import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 
@@ -50,6 +54,7 @@ public class FabricClientEntrypoint implements ClientModInitializer {
 		ParticleFactoryRegistry.getInstance().register(ModParticles.SNOW_DRIFT, WindDriftParticle.Provider::new);
 		ParticleFactoryRegistry.getInstance().register(ModParticles.LEAF_MOTE, WindDriftParticle.Provider::new);
 		ParticleFactoryRegistry.getInstance().register(ModParticles.GRASS_MOTE, WindDriftParticle.Provider::new);
+		EntityRendererRegistry.register(ModEntities.sailboat(), context -> new BoatRenderer(context, ModelLayers.OAK_BOAT));
 		ModTemplate.onInitializeClient();
 
 		ClientTickEvents.END_CLIENT_TICK.register(minecraft -> {

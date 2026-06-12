@@ -1,6 +1,7 @@
 package com.aerodynamics4mc.block;
 
 import com.aerodynamics4mc.ModTemplate;
+import com.aerodynamics4mc.vehicle.SailboatItem;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
@@ -43,6 +44,7 @@ public final class ModBlocks {
 	public static final Identifier DUCT_ID = Identifier.fromNamespaceAndPath(ModTemplate.MOD_ID, "duct");
 	public static final Identifier WIND_METER_ID = Identifier.fromNamespaceAndPath(ModTemplate.MOD_ID, "wind_meter");
 	public static final Identifier METEOROLOGICAL_MAP_ID = Identifier.fromNamespaceAndPath(ModTemplate.MOD_ID, "meteorological_map");
+	public static final Identifier SAILBOAT_ID = Identifier.fromNamespaceAndPath(ModTemplate.MOD_ID, "sailboat");
 	public static final Identifier WIND_TURBINE_PROBE_ID = Identifier.fromNamespaceAndPath(ModTemplate.MOD_ID, "wind_turbine_probe");
 	public static final Identifier WIND_VANE_ID = Identifier.fromNamespaceAndPath(ModTemplate.MOD_ID, "wind_vane");
 
@@ -52,6 +54,8 @@ public final class ModBlocks {
 			properties -> new WindMeterItem(properties.stacksTo(1)));
 	public static final DeferredItem<Item> METEOROLOGICAL_MAP_ITEM = ITEMS.registerItem(METEOROLOGICAL_MAP_ID.getPath(),
 			properties -> new MeteorologicalMapItem(properties.stacksTo(1)));
+	public static final DeferredItem<Item> SAILBOAT_ITEM = ITEMS.registerItem(SAILBOAT_ID.getPath(),
+			properties -> new SailboatItem(properties.stacksTo(1)));
 
 	public static final DeferredBlock<Block> FAN_BLOCK = registerBlock(FAN_ID.getPath(), properties -> new FanBlock(properties.strength(1.5f)));
 	public static final DeferredBlock<Block> DUCT_BLOCK = registerBlock(DUCT_ID.getPath(), properties -> new DuctBlock(properties.strength(1.0f)));
@@ -87,6 +91,7 @@ public final class ModBlocks {
 	//? fabric {
 	/*public static Item WIND_METER_ITEM = register(WIND_METER_ID.getPath(), WindMeterItem::new, new Item.Properties().stacksTo(1));
 	public static Item METEOROLOGICAL_MAP_ITEM = register(METEOROLOGICAL_MAP_ID.getPath(), MeteorologicalMapItem::new, new Item.Properties().stacksTo(1));
+	public static Item SAILBOAT_ITEM = register(SAILBOAT_ID.getPath(), SailboatItem::new, new Item.Properties().stacksTo(1));
 
 	public static Block FAN_BLOCK = register(FAN_ID.getPath(), FanBlock::new, Block.Properties.of().strength(1.5f), true);
 	public static Block DUCT_BLOCK = register(DUCT_ID.getPath(), DuctBlock::new, Block.Properties.of().strength(1.0f), true);
@@ -111,6 +116,7 @@ public final class ModBlocks {
 				output.accept(DUCT_BLOCK);
 				output.accept(WIND_METER_ITEM);
 				output.accept(METEOROLOGICAL_MAP_ITEM);
+				output.accept(SAILBOAT_ITEM);
 				output.accept(WIND_TURBINE_PROBE_BLOCK);
 				output.accept(WIND_VANE_BLOCK);
 			})
@@ -127,6 +133,7 @@ public final class ModBlocks {
 						output.accept(DUCT_BLOCK.get());
 						output.accept(WIND_METER_ITEM.get());
 						output.accept(METEOROLOGICAL_MAP_ITEM.get());
+						output.accept(SAILBOAT_ITEM.get());
 						output.accept(WIND_TURBINE_PROBE_BLOCK.get());
 						output.accept(WIND_VANE_BLOCK.get());
 					})

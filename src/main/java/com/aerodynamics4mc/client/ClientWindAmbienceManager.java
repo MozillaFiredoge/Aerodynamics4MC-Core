@@ -69,6 +69,7 @@ public final class ClientWindAmbienceManager {
     private float leafDensity;
     private float grassDensity;
     private float softGroundDensity;
+    private float stormVisualIntensity;
     private float lastGustSpeed;
     private Vec3 lastEffectiveWind = Vec3.ZERO;
 
@@ -110,6 +111,7 @@ public final class ClientWindAmbienceManager {
         leafDensity = 0.0f;
         grassDensity = 0.0f;
         softGroundDensity = 0.0f;
+        stormVisualIntensity = 0.0f;
         exposure = 0.35f;
         lastGustSpeed = 0.0f;
         lastEffectiveWind = Vec3.ZERO;
@@ -139,31 +141,55 @@ public final class ClientWindAmbienceManager {
                 SamplePolicy.SERVER_COARSE_ONLY
         );
         if (!sample.hasFlow()) {
-            targetBreezeVolume = 0.0f;
-            targetStrongVolume = 0.0f;
-            targetLeafVolume = 0.0f;
-            targetGrassVolume = 0.0f;
-            targetGroundVolume = 0.0f;
-            lastGustSpeed = 0.0f;
+            Vec3 cinematicWind = ClientCinematicWind.stormWind(world, player.position(), stormVisualIntensity, 1.35, 6.40);
+            float cinematicSpeed = horizontalLength(cinematicWind);
+            if (cinematicSpeed <= 0.10f) {
+                clearWindTargets();
+                lastGustSpeed = 0.0f;
+                return;
+            }
+            float turbulence = Mth.clamp(0.35f + stormVisualIntensity * 0.50f, 0.0f, 1.0f);
+            Vec3 gust = cinematicWind.scale(0.28 + stormVisualIntensity * 0.24 + random.nextFloat() * 0.10);
+            applyWindTargets(minecraft, player, cinematicWind, gust, cinematicSpeed * 0.78f, turbulence);
             return;
         }
 
         Vec3 effectiveWind = sample.effectiveVelocity();
         Vec3 gust = sample.gustVelocity();
-        float effectiveSpeed = horizontalLength(effectiveWind);
         float meanSpeed = sample.horizontalSpeedMetersPerSecond();
-        float gustSpeed = horizontalLength(gust);
         float turbulence = Mth.clamp(sample.turbulenceIntensity() / 3.0f, 0.0f, 1.0f);
-        float exposureWeight = Mth.clamp(exposure, 0.0f, 1.0f);
+        applyWindTargets(minecraft, player, effectiveWind, gust, meanSpeed, turbulence);
+    }
 
-        targetBreezeVolume = smoothstep(0.45f, 4.50f, effectiveSpeed) * (0.06f + 0.16f * exposureWeight);
-        targetStrongVolume = smoothstep(3.20f, 10.0f, effectiveSpeed) * (0.10f + 0.34f * exposureWeight) * (0.65f + turbulence * 0.35f);
+    private void clearWindTargets() {
+        targetBreezeVolume = 0.0f;
+        targetStrongVolume = 0.0f;
+        targetLeafVolume = 0.0f;
+        targetGrassVolume = 0.0f;
+        targetGroundVolume = 0.0f;
+    }
+
+    private void applyWindTargets(
+            Minecraft minecraft,
+            LocalPlayer player,
+            Vec3 effectiveWind,
+            Vec3 gust,
+            float meanSpeed,
+            float turbulence
+    ) {
+        float effectiveSpeed = horizontalLength(effectiveWind);
+        float gustSpeed = horizontalLength(gust);
+        float exposureWeight = Mth.clamp(exposure, 0.0f, 1.0f);
+        float stormBoost = stormVisualIntensity * exposureWeight;
+
+        targetBreezeVolume = smoothstep(0.45f, 4.50f, effectiveSpeed) * (0.06f + 0.16f * exposureWeight + stormBoost * 0.035f);
+        targetStrongVolume = smoothstep(2.40f, 10.0f, effectiveSpeed) * (0.10f + 0.34f * exposureWeight + stormBoost * 0.18f) * (0.65f + turbulence * 0.35f);
         targetLeafVolume = smoothstep(1.20f, 7.0f, effectiveSpeed) * leafDensity * (0.06f + 0.24f * exposureWeight);
         targetGrassVolume = smoothstep(0.85f, 6.0f, effectiveSpeed) * grassDensity * (0.04f + 0.26f * exposureWeight) * (0.70f + turbulence * 0.30f);
-        targetGroundVolume = smoothstep(2.40f, 9.50f, effectiveSpeed) * softGroundDensity * (0.025f + 0.13f * exposureWeight) * (0.60f + turbulence * 0.40f);
+        targetGroundVolume = smoothstep(2.00f, 9.50f, effectiveSpeed) * softGroundDensity * (0.025f + 0.13f * exposureWeight + stormBoost * 0.05f) * (0.60f + turbulence * 0.40f);
 
         targetBreezePitch = Mth.clamp(0.82f + meanSpeed * 0.035f + turbulence * 0.05f, 0.78f, 1.18f);
-        targetStrongPitch = Mth.clamp(0.76f + effectiveSpeed * 0.030f + turbulence * 0.09f, 0.78f, 1.24f);
+        targetStrongPitch = Mth.clamp(0.76f + effectiveSpeed * 0.030f + turbulence * 0.09f + stormVisualIntensity * 0.04f, 0.78f, 1.24f);
         targetLeafPitch = Mth.clamp(0.88f + effectiveSpeed * 0.018f + random.nextFloat() * 0.03f, 0.82f, 1.16f);
         targetGrassPitch = Mth.clamp(0.92f + effectiveSpeed * 0.022f + random.nextFloat() * 0.05f, 0.86f, 1.24f);
         targetGroundPitch = Mth.clamp(0.78f + effectiveSpeed * 0.016f + turbulence * 0.06f, 0.74f, 1.16f);
@@ -183,14 +209,16 @@ public final class ClientWindAmbienceManager {
             float exposureWeight
     ) {
         float gustRise = gustSpeed - lastGustSpeed;
+        float gustThreshold = Mth.lerp(stormVisualIntensity, 1.55f, 0.95f);
+        float windThreshold = Mth.lerp(stormVisualIntensity, 2.0f, 1.20f);
         if (gustCooldownTicks > 0
-                || gustSpeed < 1.55f
-                || effectiveSpeed < 2.0f
+                || gustSpeed < gustThreshold
+                || effectiveSpeed < windThreshold
                 || exposureWeight < 0.25f
                 || gustRise < 0.20f) {
             return;
         }
-        float triggerChance = Mth.clamp((gustSpeed - 1.45f) * 0.16f + turbulence * 0.20f, 0.08f, 0.55f);
+        float triggerChance = Mth.clamp((gustSpeed - 1.45f) * 0.16f + turbulence * 0.20f + stormVisualIntensity * 0.16f, 0.08f, 0.65f);
         if (random.nextFloat() > triggerChance) {
             return;
         }
@@ -237,6 +265,7 @@ public final class ClientWindAmbienceManager {
             leafDensity = 0.0f;
             grassDensity = 0.0f;
             softGroundDensity = 0.0f;
+            stormVisualIntensity = 0.0f;
             return;
         }
         BlockPos head = playerPos.above();
@@ -248,6 +277,11 @@ public final class ClientWindAmbienceManager {
         leafDensity = sampleLeafDensity(world, head);
         grassDensity = sampleGrassDensity(world, playerPos);
         softGroundDensity = sampleSoftGroundDensity(world, playerPos);
+        stormVisualIntensity = AeroClientMod.getInstance().getLocalWeatherData().stormVisualIntensity(
+                world,
+                world.getRainLevel(1.0f),
+                world.getThunderLevel(1.0f)
+        );
     }
 
     private float sampleShelter(ClientLevel world, BlockPos center) {

@@ -117,6 +117,8 @@ The server wind runtime starts automatically with the server. Manual runtime sta
 |------------------------------|-------------------------------------------|
 | `/aero_client_l2`            | Print client L2 status.                   |
 | `/aero_client_l2 on/off`     | Enable/disable client‑local L2 solver.    |
+| `/aero cinematic storm [intensity] [duration_seconds]` | Override local storm visuals and client visual wind for recording/tuning. Omit duration or use `0` to keep it until cleared. |
+| `/aero cinematic clear`      | Clear the local storm visual override.    |
 
 ---
 
@@ -217,6 +219,8 @@ For Create:Aeronautics‑style integration, use `SERVER_COARSE_ONLY` for world w
 |-----------------------------------------------------------------------|--------------------------------------------|
 | 📘 [`docs/wind-system-overview.md`](docs/wind-system-overview.md)     | **Authoritative wind‑system overview**     |
 | [`docs/release-roadmap.md`](docs/release-roadmap.md)                  | Release roadmap and version boundaries     |
+| [`docs/vnext-cinematic-weather-update.md`](docs/vnext-cinematic-weather-update.md) | Current vNext visual-weather plan |
+| [`docs/vnext-sailing-prototype.md`](docs/vnext-sailing-prototype.md) | Current vNext wind-powered vehicle prototype |
 | [`docs/wind-sampling-api.md`](docs/wind-sampling-api.md)             | Public sampling API contract               |
 | [`docs/world-scale-weather-design.md`](docs/world-scale-weather-design.md) | Driver phenomenology (older naming)   |
 | [`docs/wind-shear-weather-roadmap.md`](docs/wind-shear-weather-roadmap.md) | ABL / wind‑shear roadmap             |

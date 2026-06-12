@@ -15,9 +15,12 @@ public final class ClientLocalWeatherData {
 	private static final float MIN_VISIBLE_PRECIPITATION = 0.055f;
 	private static final int RAIN_LEVEL_SAMPLE_RADIUS_BLOCKS = 48;
 	private static final int RAIN_LEVEL_SAMPLE_STEP_BLOCKS = 16;
+	private static final long OVERRIDE_INFINITE_UNTIL = Long.MAX_VALUE;
 
 	private volatile AeroLocalWeatherPacket latest;
 	private volatile long receivedGameTime;
+	private float stormVisualOverride = Float.NaN;
+	private long stormVisualOverrideUntil = 0L;
 
 	public void update(AeroLocalWeatherPacket packet) {
 		latest = packet;
@@ -29,6 +32,7 @@ public final class ClientLocalWeatherData {
 	public void clear() {
 		latest = null;
 		receivedGameTime = 0L;
+		clearStormVisualOverride();
 	}
 
 	public boolean hasActiveField(Level world) {
@@ -45,18 +49,53 @@ public final class ClientLocalWeatherData {
 			return 0.0f;
 		}
 
-		float maxPrecipitation = 0.0f;
-		int centerX = Mth.floor(cameraPosition.x);
-		int centerZ = Mth.floor(cameraPosition.z);
-		for (int dx = -RAIN_LEVEL_SAMPLE_RADIUS_BLOCKS; dx <= RAIN_LEVEL_SAMPLE_RADIUS_BLOCKS; dx += RAIN_LEVEL_SAMPLE_STEP_BLOCKS) {
-			for (int dz = -RAIN_LEVEL_SAMPLE_RADIUS_BLOCKS; dz <= RAIN_LEVEL_SAMPLE_RADIUS_BLOCKS; dz += RAIN_LEVEL_SAMPLE_STEP_BLOCKS) {
-				maxPrecipitation = Math.max(
-						maxPrecipitation,
-						sampleChannel(packet, centerX + dx, centerZ + dz, AeroLocalWeatherPacket.CH_PRECIPITATION)
-				);
-			}
+		return Mth.clamp(maxSampledChannel(packet, cameraPosition, AeroLocalWeatherPacket.CH_PRECIPITATION), 0.0f, 1.0f);
+	}
+
+	public float stormVisualIntensity(Level world, float fallbackRain, float fallbackThunder) {
+		float fallback = Math.max(Mth.clamp(fallbackRain, 0.0f, 1.0f), Mth.clamp(fallbackThunder, 0.0f, 1.0f));
+		AeroLocalWeatherPacket packet = activePacket(world);
+		Vec3 cameraPosition = cameraPosition();
+		float override = activeStormVisualOverride(world);
+		if (packet == null || cameraPosition == null) {
+			return Math.max(fallback, override);
 		}
-		return Mth.clamp(maxPrecipitation, 0.0f, 1.0f);
+
+		float precipitation = maxSampledChannel(packet, cameraPosition, AeroLocalWeatherPacket.CH_PRECIPITATION);
+		float cloudWater = maxSampledChannel(packet, cameraPosition, AeroLocalWeatherPacket.CH_CLOUD_WATER);
+		return Mth.clamp(Math.max(Math.max(fallback, override), Math.max(precipitation, cloudWater * 0.75f)), 0.0f, 1.0f);
+	}
+
+	public void setStormVisualOverride(float intensity, int durationSeconds, Level world) {
+		stormVisualOverride = Mth.clamp(Float.isFinite(intensity) ? intensity : 0.0f, 0.0f, 1.0f);
+		if (durationSeconds <= 0 || world == null) {
+			stormVisualOverrideUntil = OVERRIDE_INFINITE_UNTIL;
+			return;
+		}
+		long now = clientGameTime(world);
+		stormVisualOverrideUntil = now + Math.max(1L, durationSeconds) * 20L;
+	}
+
+	public void clearStormVisualOverride() {
+		stormVisualOverride = Float.NaN;
+		stormVisualOverrideUntil = 0L;
+	}
+
+	public float stormVisualOverrideIntensity(Level world) {
+		return activeStormVisualOverride(world);
+	}
+
+	public String stormVisualOverrideStatus(Level world) {
+		float override = activeStormVisualOverride(world);
+		if (!(override > 0.0f)) {
+			return "Cinematic storm visual override is off";
+		}
+		if (stormVisualOverrideUntil == OVERRIDE_INFINITE_UNTIL || world == null) {
+			return String.format(java.util.Locale.ROOT, "Cinematic storm visual override %.2f is active until cleared", override);
+		}
+		long now = clientGameTime(world);
+		long remainingTicks = Math.max(0L, stormVisualOverrideUntil - now);
+		return String.format(java.util.Locale.ROOT, "Cinematic storm visual override %.2f is active for %d s", override, (remainingTicks + 19L) / 20L);
 	}
 
 	public Biome.Precipitation precipitationAt(Level world, BlockPos pos) {
@@ -101,6 +140,29 @@ public final class ClientLocalWeatherData {
 		return packet;
 	}
 
+	private float activeStormVisualOverride(Level world) {
+		if (!Float.isFinite(stormVisualOverride)) {
+			return 0.0f;
+		}
+		if (stormVisualOverrideUntil == OVERRIDE_INFINITE_UNTIL) {
+			return Mth.clamp(stormVisualOverride, 0.0f, 1.0f);
+		}
+		long now = clientGameTime(world);
+		if (now <= stormVisualOverrideUntil) {
+			return Mth.clamp(stormVisualOverride, 0.0f, 1.0f);
+		}
+		clearStormVisualOverride();
+		return 0.0f;
+	}
+
+	private long clientGameTime(Level world) {
+		if (world instanceof ClientLevel clientLevel) {
+			return clientLevel.getGameTime();
+		}
+		Minecraft minecraft = Minecraft.getInstance();
+		return minecraft != null && minecraft.level != null ? minecraft.level.getGameTime() : 0L;
+	}
+
 	private Vec3 cameraPosition() {
 		Minecraft minecraft = Minecraft.getInstance();
 		if (minecraft == null) {
@@ -110,6 +172,18 @@ public final class ClientLocalWeatherData {
 			return minecraft.gameRenderer.getMainCamera().position();
 		}
 		return minecraft.player == null ? null : minecraft.player.position();
+	}
+
+	private float maxSampledChannel(AeroLocalWeatherPacket packet, Vec3 center, int channel) {
+		float maxValue = 0.0f;
+		int centerX = Mth.floor(center.x);
+		int centerZ = Mth.floor(center.z);
+		for (int dx = -RAIN_LEVEL_SAMPLE_RADIUS_BLOCKS; dx <= RAIN_LEVEL_SAMPLE_RADIUS_BLOCKS; dx += RAIN_LEVEL_SAMPLE_STEP_BLOCKS) {
+			for (int dz = -RAIN_LEVEL_SAMPLE_RADIUS_BLOCKS; dz <= RAIN_LEVEL_SAMPLE_RADIUS_BLOCKS; dz += RAIN_LEVEL_SAMPLE_STEP_BLOCKS) {
+				maxValue = Math.max(maxValue, sampleChannel(packet, centerX + dx, centerZ + dz, channel));
+			}
+		}
+		return Mth.clamp(maxValue, 0.0f, 1.0f);
 	}
 
 	private float sampleChannel(AeroLocalWeatherPacket packet, int blockX, int blockZ, int channel) {

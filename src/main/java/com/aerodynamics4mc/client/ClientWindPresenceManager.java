@@ -35,18 +35,17 @@ public final class ClientWindPresenceManager {
     private float exposure = 0.35f;
     private float leafDensity;
     private float grassDensity;
+    private float stormVisualIntensity;
+    private float cinematicOverrideIntensity;
     private float gustPulse;
     private float lastGustSpeed;
     private double leafBudget;
     private double grassBudget;
     private double traceBudget;
+    private double cinematicMoteBudget;
 
     public void onClientTick(Minecraft minecraft) {
-        //? >=1.21.11 {
         tickActive(minecraft);
-        //?} <1.21.11 {
-        /*clear();
-        *///?}
     }
 
     public void clear() {
@@ -59,15 +58,17 @@ public final class ClientWindPresenceManager {
         exposure = 0.35f;
         leafDensity = 0.0f;
         grassDensity = 0.0f;
+        stormVisualIntensity = 0.0f;
+        cinematicOverrideIntensity = 0.0f;
         gustPulse = 0.0f;
         lastGustSpeed = 0.0f;
         leafBudget = 0.0;
         grassBudget = 0.0;
         traceBudget = 0.0;
+        cinematicMoteBudget = 0.0;
     }
 
     public void triggerGustPulse(Vec3 wind, float gustSpeed) {
-        //? >=1.21.11 {
         if (wind != null && Double.isFinite(wind.x) && Double.isFinite(wind.z)) {
             gustWind = new Vec3(wind.x, 0.0, wind.z);
         }
@@ -75,10 +76,8 @@ public final class ClientWindPresenceManager {
         leafBudget = Math.min(10.0, leafBudget + 1.8 * gustPulse);
         grassBudget = Math.min(10.0, grassBudget + 1.4 * gustPulse);
         traceBudget = Math.min(8.0, traceBudget + 1.2 * gustPulse);
-        //?}
     }
 
-    //? >=1.21.11 {
     private void tickActive(Minecraft minecraft) {
         if (minecraft == null || minecraft.isPaused() || minecraft.level == null || minecraft.player == null) {
             clear();
@@ -122,12 +121,23 @@ public final class ClientWindPresenceManager {
                 speed
         );
         double exposureWeight = Mth.clamp(exposure, 0.05f, 1.0f);
+        double stormBoost = stormVisualIntensity * exposureWeight;
         double gustBoost = gustPulse * (0.55 + exposureWeight * 0.65);
-        leafBudget = Math.min(10.0, leafBudget + leafDensity * exposureWeight * (0.05 + windFactor * 0.36 + gustBoost * 0.70));
-        grassBudget = Math.min(10.0, grassBudget + grassDensity * exposureWeight * (0.04 + windFactor * 0.32 + gustBoost * 0.55));
-        traceBudget = Math.min(8.0, traceBudget + exposureWeight * (windFactor * 0.05 + gustBoost * 0.18));
+        leafBudget = Math.min(10.0, leafBudget + leafDensity * exposureWeight * (0.05 + windFactor * 0.36 + gustBoost * 0.70 + stormBoost * 0.22));
+        grassBudget = Math.min(10.0, grassBudget + grassDensity * exposureWeight * (0.04 + windFactor * 0.32 + gustBoost * 0.55 + stormBoost * 0.18));
+        traceBudget = Math.min(8.0, traceBudget + exposureWeight * (windFactor * 0.05 + gustBoost * 0.18 + stormBoost * (0.04 + windFactor * 0.16)));
+        if (cinematicOverrideIntensity > 0.05f) {
+            cinematicMoteBudget = Math.min(12.0, cinematicMoteBudget + exposureWeight * cinematicOverrideIntensity * (0.35 + windFactor * 0.65));
+        } else {
+            cinematicMoteBudget = Math.max(0.0, cinematicMoteBudget - 0.30);
+        }
 
         int spawned = 0;
+        while (spawned < MAX_PARTICLES_PER_TICK && cinematicMoteBudget >= 1.0) {
+            spawnCinematicMote(world, cameraPos, activeWind());
+            cinematicMoteBudget -= 1.0;
+            spawned++;
+        }
         while (spawned < MAX_PARTICLES_PER_TICK && leafBudget >= 1.0) {
             if (trySpawnLeafMote(world, cameraPos, activeWind())) {
                 leafBudget -= 1.0;
@@ -160,6 +170,19 @@ public final class ClientWindPresenceManager {
     private void sampleWind(ClientLevel world, Vec3 cameraPos) {
         AeroWindSample sample = AeroClientWindApi.sample(world, cameraPos.add(0.0, 0.7, 0.0), SamplePolicy.CLIENT_LOCAL_PREFERRED);
         if (!sample.hasFlow()) {
+            Vec3 cinematicWind = ClientCinematicWind.stormWind(world, cameraPos, stormVisualIntensity, 1.10, 5.60);
+            if (horizontalLength(cinematicWind) > 0.10) {
+                smoothedWind = new Vec3(
+                        Mth.lerp(0.22, smoothedWind.x, cinematicWind.x),
+                        0.0,
+                        Mth.lerp(0.22, smoothedWind.z, cinematicWind.z)
+                );
+                if (stormVisualIntensity > 0.60f && random.nextFloat() < stormVisualIntensity * 0.045f) {
+                    triggerGustPulse(smoothedWind, 1.4f + stormVisualIntensity * 2.8f);
+                }
+                lastGustSpeed = 1.2f + stormVisualIntensity * 2.2f;
+                return;
+            }
             smoothedWind = smoothedWind.scale(0.82);
             gustPulse = Math.max(0.0f, gustPulse - 0.05f);
             lastGustSpeed = 0.0f;
@@ -182,6 +205,10 @@ public final class ClientWindPresenceManager {
         float gustRise = gustSpeed - lastGustSpeed;
         if (gustRise > 0.24f && horizontalLength(smoothedWind) > 1.0) {
             triggerGustPulse(smoothedWind.add(sample.gustVelocity()), gustSpeed);
+        } else if (stormVisualIntensity > 0.45f
+                && horizontalLength(smoothedWind) > 1.25
+                && random.nextFloat() < stormVisualIntensity * 0.035f) {
+            triggerGustPulse(smoothedWind.add(sample.gustVelocity()), Math.max(gustSpeed, 1.0f + stormVisualIntensity * 2.0f));
         }
         lastGustSpeed = gustSpeed;
     }
@@ -191,6 +218,8 @@ public final class ClientWindPresenceManager {
             exposure = 0.35f;
             leafDensity = 0.0f;
             grassDensity = 0.0f;
+            stormVisualIntensity = 0.0f;
+            cinematicOverrideIntensity = 0.0f;
             return;
         }
         BlockPos head = playerPos.above();
@@ -200,6 +229,39 @@ public final class ClientWindPresenceManager {
         exposure = Mth.clamp(0.16f + sky * 0.84f - sampleShelter(world, head) * 0.52f, 0.05f, 1.0f);
         leafDensity = sampleLeafDensity(world, head);
         grassDensity = sampleGrassDensity(world, playerPos);
+        stormVisualIntensity = AeroClientMod.getInstance().getLocalWeatherData().stormVisualIntensity(
+                world,
+                world.getRainLevel(1.0f),
+                world.getThunderLevel(1.0f)
+        );
+        cinematicOverrideIntensity = AeroClientMod.getInstance().getLocalWeatherData().stormVisualOverrideIntensity(world);
+    }
+
+    private void spawnCinematicMote(ClientLevel world, Vec3 cameraPos, Vec3 wind) {
+        double speed = horizontalLength(wind);
+        if (speed < 0.10) {
+            return;
+        }
+        Vec3 direction = new Vec3(wind.x / speed, 0.0, wind.z / speed);
+        Vec3 side = new Vec3(-direction.z, 0.0, direction.x);
+        double forward = 3.5 + random.nextDouble() * 7.0;
+        double lateral = (random.nextDouble() * 2.0 - 1.0) * 5.0;
+        double vertical = -0.8 + random.nextDouble() * 3.2;
+        Vec3 position = cameraPos
+                .add(direction.scale(forward))
+                .add(side.scale(lateral))
+                .add(0.0, vertical, 0.0);
+        spawnMote(
+                world,
+                ModParticles.GRASS_MOTE/*? neoforge{ */.get()/*?} */,
+                position.x,
+                position.y,
+                position.z,
+                wind,
+                0.46,
+                0.004,
+                0.022
+        );
     }
 
     private boolean trySpawnLeafMote(ClientLevel world, Vec3 cameraPos, Vec3 wind) {
@@ -254,7 +316,8 @@ public final class ClientWindPresenceManager {
     }
 
     private boolean trySpawnGroundTrace(ClientLevel world, Vec3 cameraPos, Vec3 wind) {
-        if (gustPulse < 0.30f && horizontalLength(wind) < 2.0) {
+        double requiredWindSpeed = stormVisualIntensity > 0.55f ? 1.20 : 2.0;
+        if (gustPulse < 0.30f && horizontalLength(wind) < requiredWindSpeed) {
             return false;
         }
         double speed = horizontalLength(wind);
@@ -309,7 +372,10 @@ public final class ClientWindPresenceManager {
         double sideZ = dirX;
         double lateral = (random.nextDouble() * 2.0 - 1.0) * (0.006 + gustPulse * 0.018);
         double velocityX = wind.x * METERS_PER_SECOND_TO_BLOCKS_PER_TICK * coupling + sideX * lateral;
-        double velocityY = minLift + random.nextDouble() * Math.max(0.001, maxLift - minLift) + gustPulse * 0.010;
+        double velocityY = minLift
+                + random.nextDouble() * Math.max(0.001, maxLift - minLift)
+                + gustPulse * 0.010
+                + stormVisualIntensity * 0.006;
         double velocityZ = wind.z * METERS_PER_SECOND_TO_BLOCKS_PER_TICK * coupling + sideZ * lateral;
         world.addParticle(type, x, y, z, velocityX, velocityY, velocityZ);
     }
@@ -426,5 +492,4 @@ public final class ClientWindPresenceManager {
         }
         return Mth.clamp(value, min, max);
     }
-    //?}
 }

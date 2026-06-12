@@ -9,6 +9,8 @@
   "item.aerodynamics4mc.wind_turbine_probe": "风力涡轮探针",
   "block.aerodynamics4mc.wind_vane": "风向标",
   "item.aerodynamics4mc.wind_vane": "风向标",
+  "item.aerodynamics4mc.sailboat": "风帆船",
+  "entity.aerodynamics4mc.sailboat": "风帆船",
   "item.aerodynamics4mc.wind_meter.tooltip": "右键查看当前位置的 GameplayWindSample。",
   "item.aerodynamics4mc.meteorological_map.tooltip": "右键查看当前中尺度风场图。",
   "message.aerodynamics4mc.meteorological_map.no_grid": "当前维度还没有可用的中尺度气象图。",

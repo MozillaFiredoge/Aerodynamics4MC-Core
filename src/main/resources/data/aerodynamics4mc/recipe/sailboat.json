@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "transportation",
+  "pattern": [
+    " W ",
+    " S ",
+    "BBB"
+  ],
+  "key": {
+    "W": "minecraft:white_wool",
+    "S": "minecraft:stick",
+    "B": "#minecraft:planks"
+  },
+  "result": {
+    "id": "aerodynamics4mc:sailboat",
+    "count": 1
+  }
+}

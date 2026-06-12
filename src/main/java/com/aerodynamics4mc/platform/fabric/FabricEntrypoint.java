@@ -10,6 +10,7 @@ import com.aerodynamics4mc.network.packet.AeroMesoscaleMapRequestPacket;
 import com.aerodynamics4mc.particle.ModParticles;
 import com.aerodynamics4mc.runtime.AeroCommands;
 import com.aerodynamics4mc.runtime.AeroServerRuntime;
+import com.aerodynamics4mc.vehicle.ModEntities;
 import com.github.razorplay.packet_handler.network.IPacket;
 import dev.kikugie.fletching_table.annotation.fabric.Entrypoint;
 import net.fabricmc.api.ModInitializer;
@@ -29,6 +30,7 @@ public class FabricEntrypoint implements ModInitializer {
 	@Override
 	public void onInitialize() {
 		ModTemplate.onInitialize();
+		ModEntities.register();
 		ModBlocks.register();
 		ModParticles.register();
 		FabricCustomPayload.register();

@@ -1,5 +1,8 @@
 package com.aerodynamics4mc.api.client;
 
+import com.aerodynamics4mc.api.A4mcBlockPos;
+import com.aerodynamics4mc.api.A4mcVec3;
+import com.aerodynamics4mc.api.A4mcWorldRef;
 import com.aerodynamics4mc.api.AeroWindSample;
 import com.aerodynamics4mc.api.SamplePolicy;
 import com.aerodynamics4mc.client.AeroClientMod;
@@ -9,6 +12,42 @@ import net.minecraft.world.phys.Vec3;
 
 public final class AeroClientWindApi {
     private AeroClientWindApi() {
+    }
+
+    public static A4mcWorldRef worldRef(ClientLevel world) {
+        return AeroClientMod.worldRef(world);
+    }
+
+    public static AeroWindSample sample(A4mcWorldRef world, A4mcVec3 position) {
+        return AeroClientMod.sampleFlow(world, position);
+    }
+
+    public static AeroWindSample sample(A4mcWorldRef world, A4mcVec3 position, SamplePolicy policy) {
+        return AeroClientMod.sampleFlow(world, position, policy);
+    }
+
+    public static AeroWindSample sample(A4mcWorldRef world, A4mcBlockPos position) {
+        return sample(world, center(position));
+    }
+
+    public static AeroWindSample sample(A4mcWorldRef world, A4mcBlockPos position, SamplePolicy policy) {
+        return sample(world, center(position), policy);
+    }
+
+    public static AeroWindSample sample(ClientLevel world, A4mcVec3 position) {
+        return AeroClientMod.sampleFlow(world, toMinecraftVector(position));
+    }
+
+    public static AeroWindSample sample(ClientLevel world, A4mcVec3 position, SamplePolicy policy) {
+        return AeroClientMod.sampleFlow(world, toMinecraftVector(position), policy);
+    }
+
+    public static AeroWindSample sample(ClientLevel world, A4mcBlockPos position) {
+        return sample(world, center(position));
+    }
+
+    public static AeroWindSample sample(ClientLevel world, A4mcBlockPos position, SamplePolicy policy) {
+        return sample(world, center(position), policy);
     }
 
     public static AeroWindSample sample(ClientLevel world, Vec3 position) {
@@ -31,8 +70,54 @@ public final class AeroClientWindApi {
         return sample(world, position).meanVelocity();
     }
 
+    public static A4mcVec3 sampleMeanVelocity(A4mcWorldRef world, A4mcVec3 position) {
+        return sample(world, position).meanVelocityVector();
+    }
+
+    public static A4mcVec3 sampleMeanVelocity(A4mcWorldRef world, A4mcBlockPos position) {
+        return sample(world, position).meanVelocityVector();
+    }
+
+    public static A4mcVec3 sampleMeanVelocity(ClientLevel world, A4mcVec3 position) {
+        return sample(world, position).meanVelocityVector();
+    }
+
+    public static A4mcVec3 sampleMeanVelocity(ClientLevel world, A4mcBlockPos position) {
+        return sample(world, position).meanVelocityVector();
+    }
+
     public static Vec3 sampleEffectiveVelocity(ClientLevel world, Vec3 position) {
         return sample(world, position).effectiveVelocity();
+    }
+
+    public static A4mcVec3 sampleEffectiveVelocity(A4mcWorldRef world, A4mcVec3 position) {
+        return sample(world, position).effectiveVelocityVector();
+    }
+
+    public static A4mcVec3 sampleEffectiveVelocity(A4mcWorldRef world, A4mcBlockPos position) {
+        return sample(world, position).effectiveVelocityVector();
+    }
+
+    public static A4mcVec3 sampleEffectiveVelocity(ClientLevel world, A4mcVec3 position) {
+        return sample(world, position).effectiveVelocityVector();
+    }
+
+    public static A4mcVec3 sampleEffectiveVelocity(ClientLevel world, A4mcBlockPos position) {
+        return sample(world, position).effectiveVelocityVector();
+    }
+
+    private static Vec3 toMinecraftVector(A4mcVec3 position) {
+        if (position == null) {
+            return null;
+        }
+        return new Vec3(position.x(), position.y(), position.z());
+    }
+
+    private static A4mcVec3 center(A4mcBlockPos position) {
+        if (position == null) {
+            return A4mcVec3.ZERO;
+        }
+        return position.center();
     }
 
     private static Vec3 center(BlockPos position) {

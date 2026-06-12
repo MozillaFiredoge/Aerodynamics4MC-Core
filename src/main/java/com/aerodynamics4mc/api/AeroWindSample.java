@@ -176,6 +176,26 @@ public record AeroWindSample(
         );
     }
 
+    public A4mcVec3 velocityVector() {
+        return new A4mcVec3(velocityX, velocityY, velocityZ);
+    }
+
+    public A4mcVec3 meanVelocityVector() {
+        return velocityVector();
+    }
+
+    public A4mcVec3 gustVelocityVector() {
+        return new A4mcVec3(gustX, gustY, gustZ);
+    }
+
+    public A4mcVec3 velocityWithGustVector() {
+        return new A4mcVec3(velocityX + gustX, velocityY + gustY, velocityZ + gustZ);
+    }
+
+    public A4mcVec3 effectiveVelocityVector() {
+        return velocityWithGustVector();
+    }
+
     public Vec3 velocity() {
         return new Vec3(velocityX, velocityY, velocityZ);
     }

@@ -1,18 +1,29 @@
-//? >=1.21.11 {
 package com.aerodynamics4mc.client;
 
 import com.aerodynamics4mc.particle.ModParticles;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.particle.Particle;
 import net.minecraft.client.particle.ParticleProvider;
+//? <1.21.11 {
+/*import net.minecraft.client.particle.ParticleRenderType;
+*///?}
 import net.minecraft.client.particle.SingleQuadParticle;
 import net.minecraft.client.particle.SpriteSet;
+//? <1.21.11 {
+/*import net.minecraft.client.particle.TextureSheetParticle;
+*///?}
 import net.minecraft.core.particles.SimpleParticleType;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.phys.Vec3;
 
-public final class WindDriftParticle extends SingleQuadParticle {
+public final class WindDriftParticle extends
+        //? >=1.21.11 {
+        SingleQuadParticle
+        //?} <1.21.11 {
+        /*TextureSheetParticle
+        *///?}
+{
     private static final Profile SAND_PROFILE = new Profile(
             0.78f, 0.66f, 0.43f, 0.34f,
             0.09f, 0.18f,
@@ -80,7 +91,12 @@ public final class WindDriftParticle extends SingleQuadParticle {
             Profile profile,
             RandomSource random
     ) {
+        //? >=1.21.11 {
         super(world, x, y, z, velocityX, velocityY, velocityZ, sprites.get(random));
+        //?} <1.21.11 {
+        /*super(world, x, y, z, velocityX, velocityY, velocityZ);
+        this.setSprite(sprites.get(random));
+        *///?}
         this.sprites = sprites;
         this.profile = profile;
         this.xd = velocityX;
@@ -150,10 +166,17 @@ public final class WindDriftParticle extends SingleQuadParticle {
         this.setSpriteFromAge(this.sprites);
     }
 
+    //? >=1.21.11 {
     @Override
     protected SingleQuadParticle.Layer getLayer() {
         return SingleQuadParticle.Layer.TRANSLUCENT;
     }
+    //?} <1.21.11 {
+    /*@Override
+    public ParticleRenderType getRenderType() {
+        return ParticleRenderType.PARTICLE_SHEET_TRANSLUCENT;
+    }
+    *///?}
 
     private float alphaForAge() {
         float progress = (float) this.age / (float) this.lifetime;
@@ -215,9 +238,14 @@ public final class WindDriftParticle extends SingleQuadParticle {
                 double z,
                 double velocityX,
                 double velocityY,
-                double velocityZ,
-                RandomSource random
+                double velocityZ
+                //? >=1.21.11 {
+                , RandomSource random
+                //?}
         ) {
+            //? <1.21.11 {
+            /*RandomSource random = RandomSource.create();
+            *///?}
             return new WindDriftParticle(
                     world,
                     x,
@@ -233,4 +261,3 @@ public final class WindDriftParticle extends SingleQuadParticle {
         }
     }
 }
-//?}

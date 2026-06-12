@@ -31,11 +31,7 @@ public final class GroundDustWindController {
     private double spawnBudget;
 
     public void onClientTick(Minecraft minecraft) {
-        //? >=1.21.11 {
         tickActive(minecraft);
-        //?} <1.21.11 {
-        /*clear();
-        *///?}
     }
 
     public void clear() {
@@ -45,7 +41,6 @@ public final class GroundDustWindController {
         this.spawnBudget = 0.0;
     }
 
-    //? >=1.21.11 {
     private void tickActive(Minecraft minecraft) {
         if (minecraft == null || minecraft.isPaused() || minecraft.level == null || minecraft.player == null) {
             clear();
@@ -96,7 +91,7 @@ public final class GroundDustWindController {
 
     private Vec3 sampleHorizontalWind(ClientLevel world, Vec3 cameraPosition) {
         AeroWindSample sample = AeroClientWindApi.sample(world, cameraPosition, SamplePolicy.CLIENT_LOCAL_PREFERRED);
-        Vec3 target = sample.hasFlow() ? sample.effectiveVelocity() : Vec3.ZERO;
+        Vec3 target = sample.hasFlow() ? sample.effectiveVelocity() : cinematicStormWind(world, cameraPosition);
         double targetX = finiteClamp(target.x, -MAX_DUST_WIND_METERS_PER_SECOND, MAX_DUST_WIND_METERS_PER_SECOND);
         double targetZ = finiteClamp(target.z, -MAX_DUST_WIND_METERS_PER_SECOND, MAX_DUST_WIND_METERS_PER_SECOND);
         this.smoothedWind = new Vec3(
@@ -105,6 +100,15 @@ public final class GroundDustWindController {
                 Mth.lerp(WIND_SMOOTHING, this.smoothedWind.z, targetZ)
         );
         return this.smoothedWind;
+    }
+
+    private Vec3 cinematicStormWind(ClientLevel world, Vec3 cameraPosition) {
+        float stormVisualIntensity = AeroClientMod.getInstance().getLocalWeatherData().stormVisualIntensity(
+                world,
+                world.getRainLevel(1.0f),
+                world.getThunderLevel(1.0f)
+        );
+        return ClientCinematicWind.stormWind(world, cameraPosition, stormVisualIntensity, 3.20, 8.60);
     }
 
     private boolean trySpawnParticle(
@@ -274,5 +278,4 @@ public final class GroundDustWindController {
             };
         }
     }
-    //?}
 }

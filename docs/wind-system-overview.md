@@ -547,19 +547,21 @@ If you're tuning wind generation, change these first and observe — most behavi
 Wind-system reading order (start at the top, drill down as needed):
 
 1. **This file** — `docs/wind-system-overview.md` — entry point.
-2. `docs/wind-sampling-api.md` — public API contract (current).
-3. `docs/world-scale-weather-design.md` — driver phenomenology (intent; some naming is older).
-4. `docs/wind-shear-weather-roadmap.md` — ABL/shear roadmap.
-5. `docs/player-facing-wind-design.md` — product philosophy.
-6. `docs/native-jni-interface-reference.md` — native channel layout, JNI ABI.
-7. `docs/native-physics-engine-todo.md` — open work in the native solver.
-8. `docs/native-authoritative-l2-runtime-design.md` — *partially stale*; re-read when re-enabling server L2.
-9. `docs/on-demand-l2-prefetch-design.md` — *aspirational*; brick prefetch design.
-10. `docs/local-air-patch-design.md` — *legacy*; deprecated patch path.
-11. `docs/shaderpack-wind-compat-design.md` — Iris/BSL integration design.
-12. `docs/phase2-completion-log.md`, `docs/phase3-completion-log.md`, `docs/phase3-implementation-plan.md` — historical milestones.
-13. `fabric-mod/native/README.md` — native build instructions.
-14. `fabric-mod/native/docs/wind_tunnel_solver_api.md` — standalone C ABI.
-15. `fabric-mod/native/docs/jni_dll_usage_zh.md` — JNI/JNA usage notes (中文).
+2. `docs/vnext-cinematic-weather-update.md` — current mainline vNext: weather and wind as visual spectacle.
+3. `docs/vnext-sailing-prototype.md` — current gameplay prototype: wind-powered sailing.
+4. `docs/wind-sampling-api.md` — public API contract (current).
+5. `docs/world-scale-weather-design.md` — driver phenomenology (intent; some naming is older).
+6. `docs/wind-shear-weather-roadmap.md` — ABL/shear roadmap.
+7. `docs/player-facing-wind-design.md` — product philosophy.
+8. `docs/native-jni-interface-reference.md` — native channel layout, JNI ABI.
+9. `docs/native-physics-engine-todo.md` — open work in the native solver.
+10. `docs/native-authoritative-l2-runtime-design.md` — *partially stale*; re-read when re-enabling server L2.
+11. `docs/on-demand-l2-prefetch-design.md` — *aspirational*; brick prefetch design.
+12. `docs/local-air-patch-design.md` — *legacy*; deprecated patch path.
+13. `docs/shaderpack-wind-compat-design.md` — Iris/BSL integration design.
+14. `docs/phase2-completion-log.md`, `docs/phase3-completion-log.md`, `docs/phase3-implementation-plan.md` — historical milestones.
+15. `fabric-mod/native/README.md` — native build instructions.
+16. `fabric-mod/native/docs/wind_tunnel_solver_api.md` — standalone C ABI.
+17. `fabric-mod/native/docs/jni_dll_usage_zh.md` — JNI/JNA usage notes (中文).
 
 Repo-root `CLAUDE.md` summarizes the whole project for tooling; keep its constants table aligned with §1.2.

@@ -1,6 +1,11 @@
 package com.aerodynamics4mc.runtime;
 
 import com.aerodynamics4mc.ModTemplate;
+import com.aerodynamics4mc.api.A4mcBlockPos;
+import com.aerodynamics4mc.api.A4mcId;
+import com.aerodynamics4mc.api.A4mcPlayerRef;
+import com.aerodynamics4mc.api.A4mcVec3;
+import com.aerodynamics4mc.api.A4mcWorldRef;
 import com.aerodynamics4mc.api.AeroWindSample;
 import com.aerodynamics4mc.api.AeroWindSamplingRules;
 import com.aerodynamics4mc.api.GameplayWindSample;
@@ -17,6 +22,7 @@ import lombok.Getter;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
@@ -456,6 +462,163 @@ public final class AeroServerRuntime {
 		return SERVER_AUTHORITATIVE_L2_ENABLED;
 	}
 
+	public static A4mcWorldRef worldRef(ServerLevel world) {
+		if (world == null) {
+			return null;
+		}
+		return A4mcWorldRef.server(fromMinecraftId(world.dimension().identifier()), world);
+	}
+
+	public static A4mcPlayerRef playerRef(ServerPlayer player) {
+		if (player == null) {
+			return null;
+		}
+		A4mcWorldRef world = A4mcWorldRef.server(fromMinecraftId(player.level().dimension().identifier()), player.level());
+		return A4mcPlayerRef.server(player.getUUID(), world, player);
+	}
+
+	public static AeroWindSample sampleFlow(A4mcWorldRef world, A4mcVec3 position) {
+		return sampleFlow(world, position, SamplePolicy.SERVER_COARSE_ONLY);
+	}
+
+	public static AeroWindSample sampleFlow(A4mcWorldRef world, A4mcVec3 position, SamplePolicy policy) {
+		if (position == null) {
+			return AeroWindSample.ZERO;
+		}
+		return sampleFlow(world, BlockPos.containing(position.x(), position.y(), position.z()), policy);
+	}
+
+	public static AeroWindSample sampleFlow(A4mcWorldRef world, A4mcBlockPos position) {
+		return sampleFlow(world, position, SamplePolicy.SERVER_COARSE_ONLY);
+	}
+
+	public static AeroWindSample sampleFlow(A4mcWorldRef world, A4mcBlockPos position, SamplePolicy policy) {
+		if (position == null) {
+			return AeroWindSample.ZERO;
+		}
+		return sampleFlow(world, new BlockPos(position.x(), position.y(), position.z()), policy);
+	}
+
+	private static AeroWindSample sampleFlow(A4mcWorldRef world, BlockPos position, SamplePolicy policy) {
+		if (world == null || position == null) {
+			return AeroWindSample.ZERO;
+		}
+		if (world.platformHandle() instanceof ServerLevel serverWorld) {
+			return sampleFlow(serverWorld, position, policy);
+		}
+		if (world.side() == A4mcWorldRef.Side.CLIENT) {
+			return AeroWindSample.ZERO;
+		}
+		ResourceKey<Level> worldKey = toWorldKey(world);
+		if (worldKey == null) {
+			return AeroWindSample.ZERO;
+		}
+		return INSTANCE.sampleWind(worldKey, position, policy);
+	}
+
+	public static AeroWindSample sampleFlow(A4mcPlayerRef player, A4mcVec3 position) {
+		return sampleFlow(player, position, SamplePolicy.SERVER_COARSE_ONLY);
+	}
+
+	public static AeroWindSample sampleFlow(A4mcPlayerRef player, A4mcVec3 position, SamplePolicy policy) {
+		if (position == null) {
+			return AeroWindSample.ZERO;
+		}
+		return sampleFlow(player, BlockPos.containing(position.x(), position.y(), position.z()), policy);
+	}
+
+	public static AeroWindSample sampleFlow(A4mcPlayerRef player, A4mcBlockPos position) {
+		return sampleFlow(player, position, SamplePolicy.SERVER_COARSE_ONLY);
+	}
+
+	public static AeroWindSample sampleFlow(A4mcPlayerRef player, A4mcBlockPos position, SamplePolicy policy) {
+		if (position == null) {
+			return AeroWindSample.ZERO;
+		}
+		return sampleFlow(player, new BlockPos(position.x(), position.y(), position.z()), policy);
+	}
+
+	private static AeroWindSample sampleFlow(A4mcPlayerRef player, BlockPos position, SamplePolicy policy) {
+		if (player == null || position == null) {
+			return AeroWindSample.ZERO;
+		}
+		if (player.platformHandle() instanceof ServerPlayer serverPlayer) {
+			return sampleFlow(serverPlayer, position, policy);
+		}
+		return sampleFlow(player.world(), position, effectiveSamplePolicyForPlayer(player, policy));
+	}
+
+	public static GameplayWindSample sampleGameplay(A4mcWorldRef world, A4mcVec3 position) {
+		return sampleGameplay(world, position, SamplePolicy.GAMEPLAY_SERVER_ONLY);
+	}
+
+	public static GameplayWindSample sampleGameplay(A4mcWorldRef world, A4mcVec3 position, SamplePolicy policy) {
+		if (position == null) {
+			return GameplayWindSample.ZERO;
+		}
+		return sampleGameplay(world, BlockPos.containing(position.x(), position.y(), position.z()), policy);
+	}
+
+	public static GameplayWindSample sampleGameplay(A4mcWorldRef world, A4mcBlockPos position) {
+		return sampleGameplay(world, position, SamplePolicy.GAMEPLAY_SERVER_ONLY);
+	}
+
+	public static GameplayWindSample sampleGameplay(A4mcWorldRef world, A4mcBlockPos position, SamplePolicy policy) {
+		if (position == null) {
+			return GameplayWindSample.ZERO;
+		}
+		return sampleGameplay(world, new BlockPos(position.x(), position.y(), position.z()), policy);
+	}
+
+	private static GameplayWindSample sampleGameplay(A4mcWorldRef world, BlockPos position, SamplePolicy policy) {
+		if (world == null || position == null) {
+			return GameplayWindSample.ZERO;
+		}
+		if (world.platformHandle() instanceof ServerLevel serverWorld) {
+			return sampleGameplay(serverWorld, position, policy);
+		}
+		if (world.side() == A4mcWorldRef.Side.CLIENT) {
+			return GameplayWindSample.ZERO;
+		}
+		ResourceKey<Level> worldKey = toWorldKey(world);
+		if (worldKey == null) {
+			return GameplayWindSample.ZERO;
+		}
+		return INSTANCE.sampleGameplayWind(worldKey, position, policy);
+	}
+
+	public static GameplayWindSample sampleGameplay(A4mcPlayerRef player, A4mcVec3 position) {
+		return sampleGameplay(player, position, SamplePolicy.GAMEPLAY_SERVER_ONLY);
+	}
+
+	public static GameplayWindSample sampleGameplay(A4mcPlayerRef player, A4mcVec3 position, SamplePolicy policy) {
+		if (position == null) {
+			return GameplayWindSample.ZERO;
+		}
+		return sampleGameplay(player, BlockPos.containing(position.x(), position.y(), position.z()), policy);
+	}
+
+	public static GameplayWindSample sampleGameplay(A4mcPlayerRef player, A4mcBlockPos position) {
+		return sampleGameplay(player, position, SamplePolicy.GAMEPLAY_SERVER_ONLY);
+	}
+
+	public static GameplayWindSample sampleGameplay(A4mcPlayerRef player, A4mcBlockPos position, SamplePolicy policy) {
+		if (position == null) {
+			return GameplayWindSample.ZERO;
+		}
+		return sampleGameplay(player, new BlockPos(position.x(), position.y(), position.z()), policy);
+	}
+
+	private static GameplayWindSample sampleGameplay(A4mcPlayerRef player, BlockPos position, SamplePolicy policy) {
+		if (player == null || position == null) {
+			return GameplayWindSample.ZERO;
+		}
+		if (player.platformHandle() instanceof ServerPlayer serverPlayer) {
+			return sampleGameplay(serverPlayer, position, policy);
+		}
+		return sampleGameplay(player.world(), position, effectiveSamplePolicyForPlayer(player, policy));
+	}
+
 	public static AeroWindSample sampleWind(ServerLevel world, Vec3 position) {
 		return sampleFlow(world, position);
 	}
@@ -575,6 +738,29 @@ public final class AeroServerRuntime {
 			return SamplePolicy.SERVER_COARSE_ONLY;
 		}
 		return effectivePolicy;
+	}
+
+	private static SamplePolicy effectiveSamplePolicyForPlayer(A4mcPlayerRef player, SamplePolicy policy) {
+		SamplePolicy effectivePolicy = policy == null ? SamplePolicy.SERVER_COARSE_ONLY : policy;
+		if (player != null && player.platformHandle() instanceof ServerPlayer serverPlayer) {
+			return effectiveSamplePolicyForPlayer(serverPlayer, effectivePolicy);
+		}
+		return effectivePolicy;
+	}
+
+	private static ResourceKey<Level> toWorldKey(A4mcWorldRef world) {
+		if (world == null || world.dimensionId() == null) {
+			return null;
+		}
+		return ResourceKey.create(Registries.DIMENSION, toMinecraftId(world.dimensionId()));
+	}
+
+	private static Identifier toMinecraftId(A4mcId id) {
+		return Identifier.fromNamespaceAndPath(id.namespace(), id.path());
+	}
+
+	private static A4mcId fromMinecraftId(Identifier id) {
+		return new A4mcId(id.getNamespace(), id.getPath());
 	}
 
 	private AeroWindSample sampleWind(ResourceKey<Level> worldKey, BlockPos position, SamplePolicy policy) {

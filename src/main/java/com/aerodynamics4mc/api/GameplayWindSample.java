@@ -165,6 +165,18 @@ public record GameplayWindSample(
         );
     }
 
+    public A4mcVec3 meanVelocityVector() {
+        return new A4mcVec3(meanX, meanY, meanZ);
+    }
+
+    public A4mcVec3 gustVelocityVector() {
+        return new A4mcVec3(gustX, gustY, gustZ);
+    }
+
+    public A4mcVec3 effectiveVelocityVector() {
+        return new A4mcVec3(meanX + gustX, meanY + gustY, meanZ + gustZ);
+    }
+
     public Vec3 meanVelocity() {
         return new Vec3(meanX, meanY, meanZ);
     }

@@ -8,12 +8,23 @@ Target first public stable release: **v0.1 on 2026-05-04**.
 
 Aerodynamics4MC is a Minecraft weather and airflow mod that makes wind observable, predictable, and usable as a gameplay resource.
 
-The mod is not primarily a CFD showcase. The solvers exist to support player-facing systems:
+The current mainline is a high-end wind and weather visual mod with optional wind-powered toys.
+
+The mod is not primarily an aircraft CFD mod. The solvers exist to support player-facing systems:
 
 - weather that has spatial structure,
 - terrain-shaped wind,
-- local airflow affected by buildings, heat, and machines,
+- cinematic air movement through particles, rain, smoke, sound, and storms,
+- optional local airflow affected by buildings, heat, and machines,
 - stable wind APIs for other mods.
+
+After community feedback, the immediate vNext sequence is:
+
+1. [`vNext: Cinematic Weather Update`](vnext-cinematic-weather-update.md) — strengthen weather and wind as visual spectacle.
+2. [`vNext: Sailing Prototype`](vnext-sailing-prototype.md) — prove wind as a simple vehicle resource without touching aircraft handling.
+
+Older weather-station, wind-power, and ventilation phases remain valid later work, but they are no longer the next
+mainline priority.
 
 ## Maintenance Principles
 
@@ -124,11 +135,64 @@ Do not block v0.1 on:
 
 These belong to later versions.
 
+## vNext A: Cinematic Weather Update
+
+### Goal
+
+Make wind and storms visually compelling without requiring players to care about solver details.
+
+Full scope: [`docs/vnext-cinematic-weather-update.md`](vnext-cinematic-weather-update.md).
+
+### Planned Work
+
+- Strengthen dust, leaves, grass, smoke, rain, snow, fire, and wind ambience.
+- Use L1/L0 as the default visual weather source.
+- Let client-local L2 add local detail where available, but never require it for ordinary weather visuals.
+- Add storm precursors:
+  - pressure drop,
+  - wind shift,
+  - gust pulses,
+  - stronger exposed-place ambience.
+- Improve rare tornado / vortex presentation as visual weather, not as default world destruction.
+
+### Success Criteria
+
+- Strong wind is visible without debug overlays.
+- Storms have readable visual precursors.
+- Dust, leaves, smoke, rain, and sound agree on wind direction.
+- Disabling client L2 still leaves convincing weather visuals.
+
+## vNext B: Sailing Prototype
+
+### Goal
+
+Prove that wind can drive a simple vehicle in a way players expect and enjoy.
+
+Full scope: [`docs/vnext-sailing-prototype.md`](vnext-sailing-prototype.md).
+
+### Planned Work
+
+- Add a reduced-order 2D sailing force model.
+- Use `GameplayWindSample` as the environment input.
+- Provide automatic sail trim by default.
+- Add simple player feedback for headwind / side wind / tailwind states.
+- Keep the prototype independent from aircraft and Create: Aeronautics flight physics.
+
+### Success Criteria
+
+- A player can cross water using wind without reading documentation.
+- Favorable wind clearly improves speed.
+- Poor wind changes route planning without making control miserable.
+- The system does not require local CFD.
+
 ## v0.2: Wind Features And Stronger Wind Resources
 
 ### Goal
 
 Make wind more player-visible and useful without waiting for fully self-emergent weather.
+
+Status: superseded as the immediate next release by the Cinematic Weather Update. The `WindFeature` idea can still
+support storm visuals later.
 
 ### Planned Work
 

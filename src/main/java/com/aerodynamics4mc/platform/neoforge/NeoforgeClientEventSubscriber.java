@@ -5,19 +5,21 @@ package com.aerodynamics4mc.platform.neoforge;
 import com.aerodynamics4mc.ModTemplate;
 import com.aerodynamics4mc.client.AeroClientCommands;
 import com.aerodynamics4mc.client.AeroClientMod;
-//? >=1.21.11 {
 import com.aerodynamics4mc.client.WindDriftParticle;
 import com.aerodynamics4mc.particle.ModParticles;
-//?}
+import com.aerodynamics4mc.vehicle.ModEntities;
 import net.minecraft.client.Minecraft;
+//? >=1.21.11 {
+import net.minecraft.client.model.geom.ModelLayers;
+//?}
+import net.minecraft.client.renderer.entity.BoatRenderer;
 import net.minecraft.commands.Commands;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
-//? >=1.21.11 {
+import net.neoforged.neoforge.client.event.EntityRenderersEvent;
 import net.neoforged.neoforge.client.event.RegisterParticleProvidersEvent;
-//?}
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.common.NeoForge;
@@ -33,7 +35,6 @@ public class NeoforgeClientEventSubscriber {
 		registerClientEvents();
 	}
 
-	//? >=1.21.11 {
 	@SubscribeEvent
 	public static void registerParticleProviders(final RegisterParticleProvidersEvent event) {
 		event.registerSpriteSet(ModParticles.SAND_DUST.get(), WindDriftParticle.Provider::new);
@@ -43,7 +44,17 @@ public class NeoforgeClientEventSubscriber {
 		event.registerSpriteSet(ModParticles.LEAF_MOTE.get(), WindDriftParticle.Provider::new);
 		event.registerSpriteSet(ModParticles.GRASS_MOTE.get(), WindDriftParticle.Provider::new);
 	}
-	//?}
+
+	@SubscribeEvent
+	public static void registerEntityRenderers(final EntityRenderersEvent.RegisterRenderers event) {
+		event.registerEntityRenderer(ModEntities.sailboat(), context ->
+				//? >=1.21.11 {
+				new BoatRenderer(context, ModelLayers.OAK_BOAT)
+				//?} <1.21.11 {
+				/*new BoatRenderer(context, false)
+				*///?}
+		);
+	}
 
 	private static void registerClientEvents() {
 		// Client Tick
