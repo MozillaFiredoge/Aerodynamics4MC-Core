@@ -3,6 +3,7 @@
 import dev.kikugie.fletching_table.extension.FletchingTableExtension
 import dev.kikugie.stonecutter.StonecutterExperimentalAPI
 import dev.kikugie.stonecutter.build.StonecutterBuildExtension
+import net.fabricmc.loom.task.RemapJarTask
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.Plugin
@@ -106,7 +107,7 @@ abstract class ModPlatformPlugin @Inject constructor() : Plugin<Project> {
 		configureProcessResources(ctx)
 		configureJava(ctx)
 		configureNativeResources(ctx)
-		configureBundledSourceSets()
+		configureBundledSourceSets(ctx)
 		registerClientIsolationCheck()
 		registerBuildAndCollectTask(ctx)
 
@@ -126,57 +127,124 @@ abstract class ModPlatformPlugin @Inject constructor() : Plugin<Project> {
 		}
 	}
 
-	private fun Project.configureBundledSourceSets() {
+	private fun Project.configureBundledSourceSets(ctx: Context) {
 		val java = the<JavaPluginExtension>()
 		val sourceSets = java.sourceSets
 		val mainSourceSet = sourceSets.named(SourceSet.MAIN_SOURCE_SET_NAME).get()
-		val contentSourceSet = configureBundledSourceSet("content", mainSourceSet)
-		configureBundledSourceSet("client", mainSourceSet, contentSourceSet)
+		val contentSourceSet = configureFeatureSourceSet("content", mainSourceSet)
+		val clientSourceSet = configureFeatureSourceSet("client", mainSourceSet)
+		bundleSourceSetIntoMainJar(clientSourceSet, mainSourceSet)
+		val contentClientSourceSet = configureFeatureSourceSet("contentClient", mainSourceSet, contentSourceSet, clientSourceSet)
+		configureContentAddonJar(ctx, contentSourceSet, contentClientSourceSet)
 	}
 
-	private fun Project.configureBundledSourceSet(
+	private fun Project.configureFeatureSourceSet(
 		name: String,
 		mainSourceSet: SourceSet,
 		vararg upstreamSourceSets: SourceSet
 	): SourceSet {
 		val sourceSets = the<JavaPluginExtension>().sourceSets
-		val bundledSourceSet = sourceSets.findByName(name) ?: sourceSets.create(name)
+		val featureSourceSet = sourceSets.findByName(name) ?: sourceSets.create(name)
 
-		configurations.named(bundledSourceSet.implementationConfigurationName) {
+		configurations.named(featureSourceSet.implementationConfigurationName) {
 			extendsFrom(configurations.getByName(mainSourceSet.implementationConfigurationName))
 		}
-		configurations.named(bundledSourceSet.compileOnlyConfigurationName) {
+		configurations.named(featureSourceSet.compileOnlyConfigurationName) {
 			extendsFrom(configurations.getByName(mainSourceSet.compileOnlyConfigurationName))
 		}
-		configurations.named(bundledSourceSet.runtimeOnlyConfigurationName) {
+		configurations.named(featureSourceSet.runtimeOnlyConfigurationName) {
 			extendsFrom(configurations.getByName(mainSourceSet.runtimeOnlyConfigurationName))
 		}
-		configurations.named(bundledSourceSet.annotationProcessorConfigurationName) {
+		configurations.named(featureSourceSet.annotationProcessorConfigurationName) {
 			extendsFrom(configurations.getByName(mainSourceSet.annotationProcessorConfigurationName))
 		}
 
-		bundledSourceSet.compileClasspath += mainSourceSet.output + mainSourceSet.compileClasspath
-		bundledSourceSet.runtimeClasspath += bundledSourceSet.output + bundledSourceSet.compileClasspath + mainSourceSet.runtimeClasspath
+		featureSourceSet.compileClasspath += mainSourceSet.output + mainSourceSet.compileClasspath
+		featureSourceSet.runtimeClasspath += featureSourceSet.output + featureSourceSet.compileClasspath + mainSourceSet.runtimeClasspath
 		for (upstreamSourceSet in upstreamSourceSets) {
-			bundledSourceSet.compileClasspath += upstreamSourceSet.output + upstreamSourceSet.compileClasspath
-			bundledSourceSet.runtimeClasspath += upstreamSourceSet.output + upstreamSourceSet.runtimeClasspath
+			featureSourceSet.compileClasspath += upstreamSourceSet.output + upstreamSourceSet.compileClasspath
+			featureSourceSet.runtimeClasspath += upstreamSourceSet.output + upstreamSourceSet.runtimeClasspath
 		}
-		mainSourceSet.runtimeClasspath += bundledSourceSet.output
 
-		tasks.named(bundledSourceSet.compileJavaTaskName) {
+		tasks.named(featureSourceSet.compileJavaTaskName) {
 			dependsOn(tasks.named(mainSourceSet.classesTaskName))
 			for (upstreamSourceSet in upstreamSourceSets) {
 				dependsOn(tasks.named(upstreamSourceSet.classesTaskName))
 			}
 		}
+		return featureSourceSet
+	}
+
+	private fun Project.bundleSourceSetIntoMainJar(featureSourceSet: SourceSet, mainSourceSet: SourceSet) {
+		mainSourceSet.runtimeClasspath += featureSourceSet.output
 		tasks.named<Jar>("jar") {
-			dependsOn(tasks.named(bundledSourceSet.classesTaskName))
-			from(bundledSourceSet.output)
+			dependsOn(tasks.named(featureSourceSet.classesTaskName))
+			from(featureSourceSet.output)
 		}
 		tasks.named<Jar>("sourcesJar") {
-			from(bundledSourceSet.allSource)
+			from(featureSourceSet.allSource)
 		}
-		return bundledSourceSet
+	}
+
+	private fun Project.configureContentAddonJar(
+		ctx: Context,
+		contentSourceSet: SourceSet,
+		contentClientSourceSet: SourceSet
+	) {
+		val contentManifestDir = layout.buildDirectory.dir("generated/contentModManifest")
+		val contentManifestTask = tasks.register<GenerateModManifestTask>("generateContentModManifest") {
+			content.set(ctx.loader.generateContentManifest(ctx))
+			outputFile.set(layout.buildDirectory.file("generated/contentModManifest/${ctx.loader.modManifestPath}"))
+		}
+
+		val contentJar = tasks.register<Jar>("contentJar") {
+			group = "build"
+			description = "Builds the official Aerodynamics4MC content addon jar."
+			archiveBaseName.set("${ctx.modId}-content")
+			if (ctx.loader.isFabricLike) {
+				archiveClassifier.set("dev")
+				description = "Builds the official Aerodynamics4MC content addon dev jar."
+			}
+			dependsOn(
+				contentManifestTask,
+				tasks.named(contentSourceSet.classesTaskName),
+				tasks.named(contentClientSourceSet.classesTaskName)
+			)
+			from(contentSourceSet.output)
+			from(contentClientSourceSet.output)
+			from(contentManifestDir)
+			from(rootProject.file("src/main/resources/assets/icon.png")) {
+				into("assets")
+			}
+		}
+
+		val finalContentJar = if (ctx.loader.isFabricLike) {
+			tasks.register<RemapJarTask>("remapContentJar") {
+				group = "build"
+				description = "Remaps the official Aerodynamics4MC content addon jar."
+				archiveBaseName.set("${ctx.modId}-content")
+				archiveClassifier.set("")
+				inputFile.set(contentJar.flatMap { it.archiveFile })
+				dependsOn(contentJar)
+				addNestedDependencies.set(false)
+				classpath.from(contentSourceSet.compileClasspath, contentClientSourceSet.compileClasspath)
+			}
+		} else {
+			contentJar
+		}
+
+		val contentSourcesJar = tasks.register<Jar>("contentSourcesJar") {
+			group = "build"
+			description = "Builds the official Aerodynamics4MC content addon sources jar."
+			archiveBaseName.set("${ctx.modId}-content")
+			archiveClassifier.set("sources")
+			from(contentSourceSet.allSource)
+			from(contentClientSourceSet.allSource)
+		}
+
+		tasks.named("assemble") {
+			dependsOn(finalContentJar, contentSourcesJar)
+		}
 	}
 
 	private fun Project.registerClientIsolationCheck() {
@@ -361,23 +429,28 @@ abstract class ModPlatformPlugin @Inject constructor() : Plugin<Project> {
 		}
 
 		tasks.withType<Jar>().configureEach {
-			dependsOn(prepareNativeResources)
+			if (name == "jar" || name == ctx.loader.jarTask) {
+				dependsOn(prepareNativeResources)
 
-			duplicatesStrategy = DuplicatesStrategy.INCLUDE
+				duplicatesStrategy = DuplicatesStrategy.INCLUDE
 
-			from(generatedNativeResourcesDir) {
-				into("")
+				from(generatedNativeResourcesDir) {
+					into("")
+				}
 			}
 		}
 	}
 
 	private fun Project.configureJarTask(ctx: Context) {
 		val generateTask = tasks.named("generateModManifest")
+		val coreJarTaskNames = setOf("jar", "sourcesJar", "javadocJar", ctx.loader.jarTask, ctx.loader.sourcesJarTask)
 		tasks.withType<Jar>().configureEach {
-			archiveBaseName.set(ctx.modId)
-			dependsOn(generateTask)
-			if (ctx.loader is Loader.Forge) {
-				manifest.attributes(ctx.loader.mixinConfigAttribute to "${ctx.modId}.mixins.json")
+			if (name in coreJarTaskNames) {
+				archiveBaseName.set(ctx.modId)
+				dependsOn(generateTask)
+				if (ctx.loader is Loader.Forge) {
+					manifest.attributes(ctx.loader.mixinConfigAttribute to "${ctx.modId}.mixins.json")
+				}
 			}
 		}
 	}
@@ -399,11 +472,14 @@ abstract class ModPlatformPlugin @Inject constructor() : Plugin<Project> {
 	}
 
 	private fun Project.registerBuildAndCollectTask(ctx: Context) {
+		val contentJarTask = if (ctx.loader.isFabricLike) "remapContentJar" else "contentJar"
 		tasks.register<Copy>("buildAndCollect") {
 			from(
 				tasks.named(ctx.extension.jarTask.get()),
 				tasks.named(ctx.extension.sourcesJarTask.get()),
-				tasks.named("javadocJar")
+				tasks.named("javadocJar"),
+				tasks.named(contentJarTask),
+				tasks.named("contentSourcesJar")
 			)
 			into(rootProject.layout.buildDirectory.file("libs/${ctx.basicVersion}"))
 			dependsOn("build")

@@ -1,9 +1,11 @@
-package com.aerodynamics4mc.client;
+package com.aerodynamics4mc.officialcontent.client;
 
 import com.aerodynamics4mc.api.AeroWindSample;
 import com.aerodynamics4mc.api.SamplePolicy;
 import com.aerodynamics4mc.api.client.minecraft.AeroMinecraftClientWindApi;
 import com.aerodynamics4mc.api.minecraft.AeroMinecraftVectors;
+import com.aerodynamics4mc.client.AeroClientMod;
+import com.aerodynamics4mc.client.ClientCinematicWind;
 import com.aerodynamics4mc.particle.ModParticles;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;

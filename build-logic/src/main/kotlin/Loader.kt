@@ -21,6 +21,7 @@ sealed class Loader(val id: String) {
 	open val isFabricLike: Boolean = false
 
 	abstract fun generateManifest(ctx: Context): String
+	abstract fun generateContentManifest(ctx: Context): String
 
 	sealed class FabricLike(id: String) : Loader(id) {
 		override val isFabricLike = true
@@ -56,6 +57,34 @@ sealed class Loader(val id: String) {
 				),
 				mixins = listOf("${ctx.modId}.mixins.json"),
 				depends = ctx.extension.dependencies.required.associate { it.modid.get() to it.fabricLikeVersionRange.get() },
+				recommends = ctx.extension.dependencies.optional.associate { it.modid.get() to it.fabricLikeVersionRange.get() },
+				breaks = ctx.extension.dependencies.incompatible.associate { it.modid.get() to it.fabricLikeVersionRange.get() })
+			return JSON.encodeToString(manifest)
+		}
+
+		override fun generateContentManifest(ctx: Context): String {
+			val requiredDependencies = ctx.extension.dependencies.required
+				.associate { it.modid.get() to it.fabricLikeVersionRange.get() }
+				.toMutableMap()
+			requiredDependencies[ctx.modId] = ">=${ctx.baseVersion}"
+
+			val manifest = FabricContentManifest(
+				id = contentModId(ctx),
+				name = "${ctx.modName} Content",
+				version = ctx.baseVersion,
+				authors = ctx.authors,
+				contributors = ctx.contributors,
+				contact = mapOf(
+					"sources" to ctx.sourcesUrl, "issues" to ctx.issuesUrl, "homepage" to ctx.homepageUrl
+				),
+				custom = buildJsonObject {},
+				description = "Official gameplay content addon for ${ctx.modName}.",
+				icon = "assets/icon.png",
+				license = ctx.licenseName,
+				entrypoints = mapOf(
+					"client" to listOf("${ctx.modGroup}.${ctx.modId}.officialcontent.platform.fabric.FabricContentClientEntrypoint")
+				),
+				depends = requiredDependencies,
 				recommends = ctx.extension.dependencies.optional.associate { it.modid.get() to it.fabricLikeVersionRange.get() },
 				breaks = ctx.extension.dependencies.incompatible.associate { it.modid.get() to it.fabricLikeVersionRange.get() })
 			return JSON.encodeToString(manifest)
@@ -120,6 +149,54 @@ sealed class Loader(val id: String) {
 
 			return TOML.encodeToString(manifest)
 		}
+
+		override fun generateContentManifest(ctx: Context): String {
+			val addonModId = contentModId(ctx)
+			val forgeDeps = mutableListOf<ForgeDependency>()
+
+			fun addDeps(container: NamedDomainObjectContainer<Dependency>, type: String) {
+				container.forEach {
+					forgeDeps.add(
+						ForgeDependency(
+							modId = it.modid.get(),
+							side = it.environment.get().uppercase(Locale.getDefault()),
+							versionRange = it.forgeLikeVersionRange.get(),
+							mandatory = type == "required",
+							type = type
+						)
+					)
+				}
+			}
+
+			addDeps(ctx.extension.dependencies.required, "required")
+			forgeDeps.add(
+				ForgeDependency(
+					modId = ctx.modId,
+					side = "BOTH",
+					versionRange = "[${ctx.baseVersion},)",
+					mandatory = true,
+					type = "required"
+				)
+			)
+
+			val manifest = ForgeManifest(
+				license = ctx.licenseName, issueTrackerURL = ctx.issuesUrl, mods = listOf(
+					ForgeMod(
+						modId = addonModId,
+						displayName = "${ctx.modName} Content",
+						version = ctx.baseVersion,
+						displayURL = ctx.homepageUrl,
+						modUrl = ctx.homepageUrl,
+						logoFile = "assets/icon.png",
+						authors = ctx.authors.joinToString(", "),
+						credits = "${ctx.authors.joinToString(", ")} Contributors: ${ctx.contributors.joinToString(", ")}",
+						description = "Official gameplay content addon for ${ctx.modName}."
+					)
+				), dependencies = mapOf(addonModId to forgeDeps)
+			)
+
+			return TOML.encodeToString(manifest)
+		}
 	}
 
 	object NeoForge : ForgeLike("neoforge") {
@@ -144,3 +221,5 @@ sealed class Loader(val id: String) {
 		}
 	}
 }
+
+private fun contentModId(ctx: Context): String = "${ctx.modId}_content"

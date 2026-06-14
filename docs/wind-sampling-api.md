@@ -46,7 +46,7 @@ In-game verification:
 
 - The Wind Meter item samples `AeroWindApi.sampleGameplay(...)`.
 - Its chat output shows effective wind, mean wind, gust, updraft, turbulence, shear, shelter, confidence, and source authority.
-- The Wind Turbine Probe block samples `AeroWindApi.sampleGameplay(...)`, estimates turbine output, and emits redstone power from `0` to `15`.
+- The optional official content addon's Wind Turbine Probe block samples `AeroWindApi.sampleGameplay(...)`, estimates turbine output, and emits redstone power from `0` to `15`.
 - This is the intended player-facing debug surface for v0.1 gameplay integrations.
 
 Gameplay wind:
@@ -201,7 +201,7 @@ Wind turbines and outdoor machines:
 
 - `AeroWindApi.sampleGameplay(...)`.
 - Prefer `SERVER_COARSE_ONLY` unless local obstruction is explicitly part of the gameplay.
-- The built-in Wind Turbine Probe is the minimal reference implementation: sample gameplay wind, derate by shelter/turbulence/confidence, then map output to redstone.
+- The official content addon's Wind Turbine Probe is the minimal reference implementation: sample gameplay wind, derate by shelter/turbulence/confidence, then map output to redstone.
 
 Building ventilation, ducts, chimneys, fans:
 

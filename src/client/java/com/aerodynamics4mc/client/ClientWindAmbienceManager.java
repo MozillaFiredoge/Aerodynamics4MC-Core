@@ -241,7 +241,6 @@ public final class ClientWindAmbienceManager {
                 source.z,
                 false
         ));
-        AeroClientMod.getInstance().getWindPresenceManager().triggerGustPulse(effectiveWind, gustSpeed);
         gustCooldownTicks = GUST_MIN_COOLDOWN_TICKS + random.nextInt(GUST_MAX_COOLDOWN_TICKS - GUST_MIN_COOLDOWN_TICKS + 1);
     }
 

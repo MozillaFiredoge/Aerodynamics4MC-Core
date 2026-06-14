@@ -1,5 +1,6 @@
-package com.aerodynamics4mc.client;
+package com.aerodynamics4mc.officialcontent.client;
 
+import com.aerodynamics4mc.client.ParticleWindController;
 import com.aerodynamics4mc.particle.ModParticles;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.particle.Particle;

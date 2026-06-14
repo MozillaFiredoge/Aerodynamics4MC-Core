@@ -3,9 +3,8 @@ package com.aerodynamics4mc.client;
 import com.aerodynamics4mc.api.AeroWindSample;
 import com.aerodynamics4mc.api.AeroWindSamplingRules;
 import com.aerodynamics4mc.api.minecraft.AeroMinecraftVectors;
-import com.aerodynamics4mc.block.FanBlock;
-import com.aerodynamics4mc.block.ModBlocks;
 import com.aerodynamics4mc.network.packet.AeroCoarseWindPacket;
+import com.aerodynamics4mc.runtime.AeroBlockBehaviors;
 import com.aerodynamics4mc.runtime.NativeSimulationBridge;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -559,8 +558,13 @@ public final class ClientL2Solver {
     }
 
     public void onClientTick(Minecraft client) {
+        BlockPos anchor = client == null || client.player == null ? null : client.player.getOnPos();
+        onClientTick(client, anchor);
+    }
+
+    void onClientTick(Minecraft client, BlockPos anchorBlockPos) {
         drainWorkerAtlases();
-        if (!experimentalEnabled || !streamingEnabled || client.level == null || client.player == null) {
+        if (!experimentalEnabled || !streamingEnabled || client == null || client.level == null || client.player == null || anchorBlockPos == null) {
             return;
         }
         if (clientSolveDisabled) {
@@ -584,14 +588,14 @@ public final class ClientL2Solver {
         }
 
         Identifier dimensionId = world.dimension().identifier();
-        BlockPos playerBlockPos = client.player.getOnPos();
-        BlockPos origin = brickOrigin(playerBlockPos);
+        BlockPos anchorPos = anchorBlockPos.immutable();
+        BlockPos origin = brickOrigin(anchorPos);
         int brickX = Math.floorDiv(origin.getX(), BRICK_SIZE);
         int brickY = Math.floorDiv(origin.getY(), BRICK_SIZE);
         int brickZ = Math.floorDiv(origin.getZ(), BRICK_SIZE);
-        int localX = playerBlockPos.getX() - origin.getX();
-        int localY = playerBlockPos.getY() - origin.getY();
-        int localZ = playerBlockPos.getZ() - origin.getZ();
+        int localX = anchorPos.getX() - origin.getX();
+        int localY = anchorPos.getY() - origin.getY();
+        int localZ = anchorPos.getZ() - origin.getZ();
         boolean dimensionChanged = activeDimension == null || !activeDimension.equals(dimensionId);
         boolean originChanged = activeOrigin == null
             || !activeOrigin.equals(origin)
@@ -650,6 +654,10 @@ public final class ClientL2Solver {
         if (publish) {
             lastPublishedClientGameTime = clientGameTime;
         }
+    }
+
+    void onIdleClientTick() {
+        drainWorkerAtlases();
     }
 
     private void drainWorkerAtlases() {
@@ -1663,8 +1671,8 @@ public final class ClientL2Solver {
         if (state == null) {
             return;
         }
-        if (state.is(ModBlocks.FAN_BLOCK)) {
-            Direction direction = state.getOptionalValue(FanBlock.FACING).orElse(Direction.NORTH);
+        if (AeroBlockBehaviors.isFan(state)) {
+            Direction direction = AeroBlockBehaviors.fanFacing(state);
             addFanFootprintPatchPositions(positions, center, direction);
         }
         if (sampleEmitterThermalPowerWatts(state) > 0.0f) {
@@ -1932,8 +1940,8 @@ public final class ClientL2Solver {
                     for (int b = -FAN_FORCE_RADIUS_CELLS; b <= FAN_FORCE_RADIUS_CELLS; b++) {
                         BlockPos fanPos = offsetPerpendicular(axialOrigin, axis, -a, -b);
                         BlockState fanState = world.getBlockState(fanPos);
-                        if (!fanState.is(ModBlocks.FAN_BLOCK)
-                                || fanState.getOptionalValue(FanBlock.FACING).orElse(Direction.NORTH) != direction) {
+                        if (!AeroBlockBehaviors.isFan(fanState)
+                                || AeroBlockBehaviors.fanFacing(fanState) != direction) {
                             continue;
                         }
                         if (!fanPathClear(world, fanPos, direction, distance, a, b)) {
@@ -1974,10 +1982,10 @@ public final class ClientL2Solver {
     }
 
     private int sourceFanDirectionCodeForState(BlockState state) {
-        if (state == null || !state.is(ModBlocks.FAN_BLOCK)) {
+        if (state == null || !AeroBlockBehaviors.isFan(state)) {
             return 0;
         }
-        Direction direction = state.getOptionalValue(FanBlock.FACING).orElse(Direction.NORTH);
+        Direction direction = AeroBlockBehaviors.fanFacing(state);
         return switch (direction) {
             case WEST -> 1;
             case EAST -> 2;
@@ -2098,7 +2106,7 @@ public final class ClientL2Solver {
     }
 
     private boolean isSolidObstacle(ClientLevel world, BlockPos pos, BlockState state) {
-        if (state.isAir() || state.is(ModBlocks.DUCT_BLOCK)) {
+        if (state.isAir() || AeroBlockBehaviors.isDuct(state)) {
             return false;
         }
         return !state.getCollisionShape(world, pos).isEmpty();
@@ -2825,6 +2833,12 @@ public final class ClientL2Solver {
         fastSuspendUntilGameTime = Long.MIN_VALUE;
     }
 
+    void releaseActivePatch() {
+        resetActiveBrick();
+        worker.reset();
+        fastSuspendUntilGameTime = Long.MIN_VALUE;
+    }
+
     private void clearPendingStaticPatches() {
         pendingSourcePatches.clear();
         pendingStaticPatchDimension = null;
@@ -2954,6 +2968,14 @@ public final class ClientL2Solver {
 
     boolean isExperimentalEnabled() {
         return experimentalEnabled;
+    }
+
+    boolean hasActivePatch() {
+        return activeBrickCount > 0 && activeOrigin != null && activeDimension != null;
+    }
+
+    boolean hasReadyLocalFlow() {
+        return hasActivePatch() && hasReadyActiveBrick() && lastPublishedClientGameTime != Long.MIN_VALUE;
     }
 
     private void disableClientSolve(Minecraft client, String reason) {

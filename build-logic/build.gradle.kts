@@ -23,6 +23,7 @@ repositories {
 }
 
 dependencies {
+	implementation("net.fabricmc:fabric-loom:${libs.versions.fabric.loom.get()}")
 	implementation(libs.kikugie.postprocess)
 	implementation(libs.kikugie.stonecutter)
 	implementation(libs.mod.publish.plugin)

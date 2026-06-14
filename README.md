@@ -29,7 +29,21 @@ dependencies {
 }
 ```
 
-The distributed mod jar remains an all-in-one gameplay jar for players. Its built-in blocks, particles, vehicles, and client visual code are kept behind internal source-set boundaries, but they are not a public integration surface. Add-on mods should depend only on the published API artifact and should not import `com.aerodynamics4mc.block.*`, `com.aerodynamics4mc.particle.*`, `com.aerodynamics4mc.vehicle.*`, `com.aerodynamics4mc.client.*`, or loader-specific internals. This keeps integrations portable across Minecraft versions and mod loaders.
+The runtime is split into three layers:
+
+- `aerodynamics4mc-api`: standalone Minecraft-free compile-time API for other mods.
+- `aerodynamics4mc`: core runtime mod with weather, wind sampling, networking, native solver loading, and client visual infrastructure.
+- `aerodynamics4mc-content`: optional official content addon. It contains the built-in blocks, particles, vehicles, item/block assets, recipes, and content client visuals.
+
+Players who want the built-in gameplay content should install both the core mod jar and the matching `aerodynamics4mc-content` jar for their Minecraft version and loader. Add-on mods should depend only on the published API artifact and should not import `com.aerodynamics4mc.block.*`, `com.aerodynamics4mc.particle.*`, `com.aerodynamics4mc.vehicle.*`, `com.aerodynamics4mc.client.*`, or loader-specific internals. The content addon is an example/official pack, not a public integration surface. This keeps integrations portable across Minecraft versions and mod loaders.
+
+Local builds produce both runtime artifacts:
+
+```bash
+./gradlew buildAndCollect
+```
+
+The collected jars are written to `build/libs/<version>/`, including `aerodynamics4mc-...jar` and `aerodynamics4mc-content-...jar`.
 
 **Server‑side sampling:**
 

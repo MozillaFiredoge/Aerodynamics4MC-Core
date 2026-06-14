@@ -5,23 +5,14 @@ package com.aerodynamics4mc.platform.neoforge;
 import com.aerodynamics4mc.ModTemplate;
 import com.aerodynamics4mc.client.AeroClientCommands;
 import com.aerodynamics4mc.client.AeroClientMod;
-import com.aerodynamics4mc.client.WindDriftParticle;
 import com.aerodynamics4mc.network.ClientServerboundPacketSender;
 import com.aerodynamics4mc.network.ForgeCustomPayload;
-import com.aerodynamics4mc.particle.ModParticles;
-import com.aerodynamics4mc.vehicle.ModEntities;
 import net.minecraft.client.Minecraft;
-//? >=1.21.11 {
-import net.minecraft.client.model.geom.ModelLayers;
-//?}
-import net.minecraft.client.renderer.entity.BoatRenderer;
 import net.minecraft.commands.Commands;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
-import net.neoforged.neoforge.client.event.EntityRenderersEvent;
-import net.neoforged.neoforge.client.event.RegisterParticleProvidersEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.common.NeoForge;
@@ -43,48 +34,23 @@ public class NeoforgeClientEventSubscriber {
 		registerClientEvents();
 	}
 
-	@SubscribeEvent
-	public static void registerParticleProviders(final RegisterParticleProvidersEvent event) {
-		event.registerSpriteSet(ModParticles.SAND_DUST.get(), WindDriftParticle.Provider::new);
-		event.registerSpriteSet(ModParticles.RED_SAND_DUST.get(), WindDriftParticle.Provider::new);
-		event.registerSpriteSet(ModParticles.DIRT_DUST.get(), WindDriftParticle.Provider::new);
-		event.registerSpriteSet(ModParticles.SNOW_DRIFT.get(), WindDriftParticle.Provider::new);
-		event.registerSpriteSet(ModParticles.LEAF_MOTE.get(), WindDriftParticle.Provider::new);
-		event.registerSpriteSet(ModParticles.GRASS_MOTE.get(), WindDriftParticle.Provider::new);
-	}
-
-	@SubscribeEvent
-	public static void registerEntityRenderers(final EntityRenderersEvent.RegisterRenderers event) {
-		event.registerEntityRenderer(ModEntities.sailboat(), context ->
-				//? >=1.21.11 {
-				new BoatRenderer(context, ModelLayers.OAK_BOAT)
-				//?} <1.21.11 {
-				/*new BoatRenderer(context, false)
-				*///?}
-		);
-	}
-
 	private static void registerClientEvents() {
 		// Client Tick
 		NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post event) -> {
 			Minecraft minecraft = Minecraft.getInstance();
-			AeroClientMod.getInstance().getClientL2Solver().onClientTick(minecraft);
+			AeroClientMod.getInstance().getLocalAirflowService().onClientTick(minecraft);
 			AeroClientMod.getInstance().getVisualizer().onClientTick();
 			AeroClientMod.getInstance().getIrisWindBridge().onClientTick(minecraft);
 			AeroClientMod.getInstance().getWindAmbienceManager().onClientTick(minecraft);
-			AeroClientMod.getInstance().getWindPresenceManager().onClientTick(minecraft);
-			AeroClientMod.getInstance().getGroundDustWindController().onClientTick(minecraft);
 		});
 
 		// Client Disconnect
 		NeoForge.EVENT_BUS.addListener((LevelEvent.Unload event) -> {
 			if (event.getLevel().isClientSide()) {
-				AeroClientMod.getInstance().getClientL2Solver().close();
+				AeroClientMod.getInstance().getLocalAirflowService().close();
 				AeroClientMod.getInstance().getVisualizer().clearState();
 				AeroClientMod.getInstance().getIrisWindBridge().clear();
 				AeroClientMod.getInstance().getWindAmbienceManager().clear();
-				AeroClientMod.getInstance().getWindPresenceManager().clear();
-				AeroClientMod.getInstance().getGroundDustWindController().clear();
 				AeroClientMod.getInstance().getMeteorologicalMapData().clear();
 				AeroClientMod.getInstance().getLocalWeatherData().clear();
 			}

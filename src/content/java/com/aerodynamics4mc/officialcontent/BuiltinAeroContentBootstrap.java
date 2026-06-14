@@ -1,9 +1,11 @@
-package com.aerodynamics4mc.content;
+package com.aerodynamics4mc.officialcontent;
 
 import com.aerodynamics4mc.ModTemplate;
 import com.aerodynamics4mc.block.FanBlock;
 import com.aerodynamics4mc.block.FanBlockEntity;
 import com.aerodynamics4mc.block.ModBlocks;
+import com.aerodynamics4mc.content.AeroContentBootstrap;
+import com.aerodynamics4mc.content.AeroContentContext;
 import com.aerodynamics4mc.particle.ModParticles;
 import com.aerodynamics4mc.platform.Platform;
 import com.aerodynamics4mc.runtime.AeroBlockBehaviors;

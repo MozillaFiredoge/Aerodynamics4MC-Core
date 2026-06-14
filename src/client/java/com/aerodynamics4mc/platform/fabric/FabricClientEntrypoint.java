@@ -8,19 +8,12 @@ import com.aerodynamics4mc.client.AeroClientMod;
 import com.aerodynamics4mc.network.ClientPacketHandler;
 import com.aerodynamics4mc.network.ClientServerboundPacketSender;
 import com.aerodynamics4mc.network.FabricCustomPayload;
-import com.aerodynamics4mc.particle.ModParticles;
-import com.aerodynamics4mc.client.WindDriftParticle;
-import com.aerodynamics4mc.vehicle.ModEntities;
 import dev.kikugie.fletching_table.annotation.fabric.Entrypoint;
-import net.minecraft.client.model.geom.ModelLayers;
-import net.minecraft.client.renderer.entity.BoatRenderer;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
-import net.fabricmc.fabric.api.client.particle.v1.ParticleFactoryRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 
@@ -32,40 +25,27 @@ public class FabricClientEntrypoint implements ClientModInitializer {
 		ClientServerboundPacketSender.register(packet -> ClientPlayNetworking.send(new FabricCustomPayload(packet)));
 		ClientPlayNetworking.registerGlobalReceiver(FabricCustomPayload.CUSTOM_PAYLOAD_ID,
 				(payload, context) -> ClientPacketHandler.handle(payload.packet(), context));
-		ParticleFactoryRegistry.getInstance().register(ModParticles.SAND_DUST, WindDriftParticle.Provider::new);
-		ParticleFactoryRegistry.getInstance().register(ModParticles.RED_SAND_DUST, WindDriftParticle.Provider::new);
-		ParticleFactoryRegistry.getInstance().register(ModParticles.DIRT_DUST, WindDriftParticle.Provider::new);
-		ParticleFactoryRegistry.getInstance().register(ModParticles.SNOW_DRIFT, WindDriftParticle.Provider::new);
-		ParticleFactoryRegistry.getInstance().register(ModParticles.LEAF_MOTE, WindDriftParticle.Provider::new);
-		ParticleFactoryRegistry.getInstance().register(ModParticles.GRASS_MOTE, WindDriftParticle.Provider::new);
-		EntityRendererRegistry.register(ModEntities.sailboat(), context -> new BoatRenderer(context, ModelLayers.OAK_BOAT));
 		ModTemplate.onInitializeClient();
 		AeroClientMod.getInstance().onInitializeClient();
 
 		ClientTickEvents.END_CLIENT_TICK.register(minecraft -> {
-			AeroClientMod.getInstance().getClientL2Solver().onClientTick(minecraft);
+			AeroClientMod.getInstance().getLocalAirflowService().onClientTick(minecraft);
 			AeroClientMod.getInstance().getVisualizer().onClientTick();
 			AeroClientMod.getInstance().getIrisWindBridge().onClientTick(minecraft);
 			AeroClientMod.getInstance().getWindAmbienceManager().onClientTick(minecraft);
-			AeroClientMod.getInstance().getWindPresenceManager().onClientTick(minecraft);
-			AeroClientMod.getInstance().getGroundDustWindController().onClientTick(minecraft);
 		});
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
-			AeroClientMod.getInstance().getClientL2Solver().close();
+			AeroClientMod.getInstance().getLocalAirflowService().close();
 			AeroClientMod.getInstance().getVisualizer().clearState();
 			AeroClientMod.getInstance().getIrisWindBridge().clear();
 			AeroClientMod.getInstance().getWindAmbienceManager().clear();
-			AeroClientMod.getInstance().getWindPresenceManager().clear();
-			AeroClientMod.getInstance().getGroundDustWindController().clear();
 			AeroClientMod.getInstance().getMeteorologicalMapData().clear();
 			AeroClientMod.getInstance().getLocalWeatherData().clear();
 		});
 		ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
-			AeroClientMod.getInstance().getClientL2Solver().close();
+			AeroClientMod.getInstance().getLocalAirflowService().close();
 			AeroClientMod.getInstance().getIrisWindBridge().close();
 			AeroClientMod.getInstance().getWindAmbienceManager().close();
-			AeroClientMod.getInstance().getWindPresenceManager().clear();
-			AeroClientMod.getInstance().getGroundDustWindController().clear();
 			AeroClientMod.getInstance().getMeteorologicalMapData().clear();
 			AeroClientMod.getInstance().getLocalWeatherData().clear();
 		});

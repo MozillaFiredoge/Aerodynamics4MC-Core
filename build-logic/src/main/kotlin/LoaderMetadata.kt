@@ -24,6 +24,26 @@ data class FabricManifest(
 )
 
 @Serializable
+data class FabricContentManifest(
+	val schemaVersion: Int = 1,
+	val id: String,
+	val name: String,
+	val version: String,
+	val authors: List<String>,
+	val contributors: List<String>,
+	val contact: Map<String, String>,
+	val custom: JsonObject,
+	val description: String,
+	val icon: String,
+	val license: String,
+	val environment: String = "*",
+	val entrypoints: Map<String, List<String>>,
+	val depends: Map<String, String> = emptyMap(),
+	val recommends: Map<String, String> = emptyMap(),
+	val breaks: Map<String, String> = emptyMap()
+)
+
+@Serializable
 data class ForgeManifest(
 	val modLoader: String = "javafml",
 	val loaderVersion: String = "[2,)",

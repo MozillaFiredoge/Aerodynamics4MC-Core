@@ -10,8 +10,6 @@ import com.aerodynamics4mc.api.client.AeroClientWindApi;
 import com.aerodynamics4mc.api.client.AeroClientWindRuntimeProvider;
 import com.aerodynamics4mc.api.minecraft.AeroMinecraftVectors;
 import com.aerodynamics4mc.network.ClientPacketHandler;
-import com.aerodynamics4mc.network.ClientServerboundPacketSender;
-import com.aerodynamics4mc.network.packet.AeroClientL2PreferencePacket;
 import com.aerodynamics4mc.network.packet.AeroCoarseWindPacket;
 import com.aerodynamics4mc.network.packet.AeroFlowAnalysisPacket;
 import com.aerodynamics4mc.network.packet.AeroFlowPacket;
@@ -39,11 +37,10 @@ public final class AeroClientMod implements AeroClientWindRuntimeProvider {
 	private final AeroVisualizer visualizer = new AeroVisualizer();
 	private final IrisWindBridge irisWindBridge = new IrisWindBridge(visualizer);
 	private final ClientWindAmbienceManager windAmbienceManager = new ClientWindAmbienceManager();
-	private final ClientWindPresenceManager windPresenceManager = new ClientWindPresenceManager();
-	private final GroundDustWindController groundDustWindController = new GroundDustWindController();
 	private final ClientMeteorologicalMapData meteorologicalMapData = new ClientMeteorologicalMapData();
 	private final ClientLocalWeatherData localWeatherData = new ClientLocalWeatherData();
 	public final ClientL2Solver clientL2Solver = new ClientL2Solver(visualizer);
+	private final ClientLocalAirflowService localAirflowService = new ClientLocalAirflowService(clientL2Solver);
 
 	private AeroClientMod() {
 		AeroClientWindApi.registerProvider(this);
@@ -95,8 +92,7 @@ public final class AeroClientMod implements AeroClientWindRuntimeProvider {
 					packet.isRenderStreamlines()
 			));
 			getInstance().getIrisWindBridge().onRuntimeState(packet.isStreamingEnabled());
-			getInstance().getClientL2Solver().onRuntimeState(packet.isStreamingEnabled());
-			ClientServerboundPacketSender.send(new AeroClientL2PreferencePacket(getInstance().getClientL2Solver().isExperimentalEnabled() && packet.isStreamingEnabled()));
+			getInstance().getLocalAirflowService().onRuntimeState(packet.isStreamingEnabled());
 		});
 	}
 
@@ -202,9 +198,7 @@ public final class AeroClientMod implements AeroClientWindRuntimeProvider {
 	}
 
 	private static SamplePolicy defaultSamplePolicy(AeroClientMod active) {
-		return active != null && active.clientL2Solver.isExperimentalEnabled()
-				? SamplePolicy.CLIENT_LOCAL_PREFERRED
-				: SamplePolicy.SERVER_COARSE_ONLY;
+		return SamplePolicy.SERVER_COARSE_ONLY;
 	}
 
 	private static Vec3 toMinecraftVector(A4mcVec3 position) {

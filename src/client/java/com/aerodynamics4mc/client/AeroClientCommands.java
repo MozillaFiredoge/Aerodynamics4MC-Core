@@ -1,10 +1,7 @@
 package com.aerodynamics4mc.client;
 
-import com.aerodynamics4mc.ModTemplate;
 import com.aerodynamics4mc.api.SamplePolicy;
 import com.aerodynamics4mc.api.minecraft.AeroMinecraftVectors;
-import com.aerodynamics4mc.network.ClientServerboundPacketSender;
-import com.aerodynamics4mc.network.packet.AeroClientL2PreferencePacket;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.FloatArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
@@ -33,6 +30,10 @@ public class AeroClientCommands {
 								.executes(ctx -> setClientL2Experimental(ctx.getSource(), true)))
 						.then(Commands.literal("off")
 								.executes(ctx -> setClientL2Experimental(ctx.getSource(), false)))
+						.then(Commands.literal("focus")
+								.executes(ctx -> requestClientL2Focus(ctx.getSource(), 20 * 5))
+								.then(Commands.argument("duration_ticks", IntegerArgumentType.integer(1, 20 * 60 * 5))
+										.executes(ctx -> requestClientL2Focus(ctx.getSource(), IntegerArgumentType.getInteger(ctx, "duration_ticks")))))
 						.then(Commands.literal("stress")
 								.executes(ctx -> clientL2StressStatus(ctx.getSource()))
 								.then(Commands.literal("status")
@@ -90,18 +91,41 @@ public class AeroClientCommands {
 
 	private static int clientL2Status(CommandSourceStack source) {
 		AeroClientMod mod = AeroClientMod.getInstance();
-		source.sendSuccess(() -> Component.literal(mod.getClientL2Solver().status()), false);
+		source.sendSuccess(() -> Component.literal(mod.getLocalAirflowService().status() + " | " + mod.getClientL2Solver().status()), false);
 		return 1;
 	}
 
 	private static int setClientL2Experimental(CommandSourceStack source, boolean enabled) {
 		AeroClientMod mod = AeroClientMod.getInstance();
-		mod.getClientL2Solver().setExperimentalEnabled(enabled);
+		mod.getLocalAirflowService().setEnabled(enabled);
 		if (enabled) {
 			mod.getVisualizer().clearRemoteFlowFields();
 		}
-		ClientServerboundPacketSender.send(new AeroClientL2PreferencePacket(enabled));
-		source.sendSuccess(() -> Component.literal("Client L2 local solve " + (enabled ? "enabled" : "disabled")), false);
+		source.sendSuccess(() -> Component.literal("Client L2 on-demand local solve " + (enabled ? "enabled" : "disabled")), false);
+		return 1;
+	}
+
+	private static int requestClientL2Focus(CommandSourceStack source, int durationTicks) {
+		AeroClientMod mod = AeroClientMod.getInstance();
+		if (!mod.getLocalAirflowService().isEnabled()) {
+			source.sendFailure(Component.literal("Client L2 on-demand local solve is disabled"));
+			return 0;
+		}
+		Minecraft minecraft = Minecraft.getInstance();
+		if (minecraft == null || minecraft.level == null || minecraft.player == null) {
+			source.sendFailure(Component.literal("Client world is not available"));
+			return 0;
+		}
+		mod.getLocalAirflowService().requestPatch(
+				"command:focus",
+				minecraft.level,
+				minecraft.player.blockPosition(),
+				32,
+				durationTicks,
+				"command_focus"
+		);
+		mod.getVisualizer().clearRemoteFlowFields();
+		source.sendSuccess(() -> Component.literal("Requested client L2 focus patch for " + durationTicks + " ticks"), false);
 		return 1;
 	}
 

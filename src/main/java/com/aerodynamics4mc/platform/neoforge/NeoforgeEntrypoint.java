@@ -58,7 +58,7 @@ public class NeoforgeEntrypoint {
 
 		NeoForge.EVENT_BUS.addListener((PlayerEvent.PlayerLoggedInEvent event) -> {
 			if (event.getEntity() instanceof ServerPlayer player) {
-				MinecraftServer server = player.server;
+				MinecraftServer server = ((ServerLevel) player.level()).getServer();
 				runtime.sendStateToPlayer(player, server);
 				runtime.broadcastState(server);
 				runtime.sendFlowSnapshotToPlayer(player, server);
@@ -66,7 +66,7 @@ public class NeoforgeEntrypoint {
 		});
 		NeoForge.EVENT_BUS.addListener((PlayerEvent.PlayerLoggedOutEvent event) -> {
 			if (event.getEntity() instanceof ServerPlayer player) {
-				MinecraftServer server = player.server;
+				MinecraftServer server = ((ServerLevel) player.level()).getServer();
 				runtime.onPlayerDisconnected(player);
 				runtime.broadcastState(server);
 			}

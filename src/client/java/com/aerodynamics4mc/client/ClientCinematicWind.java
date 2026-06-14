@@ -4,13 +4,13 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 
-final class ClientCinematicWind {
+public final class ClientCinematicWind {
     private static final float MIN_ACTIVE_INTENSITY = 0.05f;
 
     private ClientCinematicWind() {
     }
 
-    static Vec3 stormWind(ClientLevel world, Vec3 position, float intensity, double minSpeed, double maxSpeed) {
+    public static Vec3 stormWind(ClientLevel world, Vec3 position, float intensity, double minSpeed, double maxSpeed) {
         float strength = Mth.clamp(Float.isFinite(intensity) ? intensity : 0.0f, 0.0f, 1.0f);
         if (world == null || strength <= MIN_ACTIVE_INTENSITY || maxSpeed <= 0.0) {
             return Vec3.ZERO;
