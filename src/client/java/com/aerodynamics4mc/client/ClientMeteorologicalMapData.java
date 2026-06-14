@@ -1,6 +1,6 @@
 package com.aerodynamics4mc.client;
 
-import com.aerodynamics4mc.ModTemplate;
+import com.aerodynamics4mc.network.ClientServerboundPacketSender;
 import com.aerodynamics4mc.network.packet.AeroMesoscaleMapPacket;
 import com.aerodynamics4mc.network.packet.AeroMesoscaleMapRequestPacket;
 
@@ -23,7 +23,7 @@ public final class ClientMeteorologicalMapData {
 	}
 
 	public void requestRefresh(int layer) {
-		ModTemplate.xplat().sendPacketToServer(new AeroMesoscaleMapRequestPacket(layer, false));
+		ClientServerboundPacketSender.send(new AeroMesoscaleMapRequestPacket(layer, false));
 	}
 
 	public float windX(AeroMesoscaleMapPacket packet, int localX, int localZ) {

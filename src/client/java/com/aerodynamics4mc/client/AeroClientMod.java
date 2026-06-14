@@ -9,6 +9,8 @@ import com.aerodynamics4mc.api.SamplePolicy;
 import com.aerodynamics4mc.api.client.AeroClientWindApi;
 import com.aerodynamics4mc.api.client.AeroClientWindRuntimeProvider;
 import com.aerodynamics4mc.api.minecraft.AeroMinecraftVectors;
+import com.aerodynamics4mc.network.ClientPacketHandler;
+import com.aerodynamics4mc.network.ClientServerboundPacketSender;
 import com.aerodynamics4mc.network.packet.AeroClientL2PreferencePacket;
 import com.aerodynamics4mc.network.packet.AeroCoarseWindPacket;
 import com.aerodynamics4mc.network.packet.AeroFlowAnalysisPacket;
@@ -16,6 +18,7 @@ import com.aerodynamics4mc.network.packet.AeroFlowPacket;
 import com.aerodynamics4mc.network.packet.AeroLocalWeatherPacket;
 import com.aerodynamics4mc.network.packet.AeroMesoscaleMapPacket;
 import com.aerodynamics4mc.network.packet.AeroRuntimeStatePacket;
+import com.github.razorplay.packet_handler.network.IPacket;
 import lombok.Getter;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
@@ -54,6 +57,7 @@ public final class AeroClientMod implements AeroClientWindRuntimeProvider {
 	}
 
 	public void onInitializeClient() {
+		ClientPacketHandler.register(AeroClientMod::handleClientPacket);
 		clientL2Solver.initialize();
 	}
 
@@ -66,6 +70,22 @@ public final class AeroClientMod implements AeroClientWindRuntimeProvider {
 
 	// ====================== Network Handlers ======================
 
+	private static void handleClientPacket(IPacket packet, Object context) {
+		switch (packet) {
+			case AeroRuntimeStatePacket pkt -> onRuntimeState(pkt, clientContext(context));
+			case AeroFlowAnalysisPacket pkt -> onFlowAnalysis(pkt, clientContext(context));
+			case AeroCoarseWindPacket pkt -> onCoarseWindField(pkt, clientContext(context));
+			case AeroFlowPacket pkt -> onFlowField(pkt, clientContext(context));
+			case AeroLocalWeatherPacket pkt -> onLocalWeather(pkt, clientContext(context));
+			case AeroMesoscaleMapPacket pkt -> onMesoscaleMap(pkt, clientContext(context));
+			default -> ModTemplate.LOGGER.warn("Unknown server packet: {}", packet.getPacketId());
+		}
+	}
+
+	private static /*? fabric{ */ /*ClientPlayNetworking.Context *//*?} neoforge{ */ IPayloadContext /*?} */ clientContext(Object context) {
+		return (/*? fabric{ */ /*ClientPlayNetworking.Context *//*?} neoforge{ */ IPayloadContext /*?} */) context;
+	}
+
 	public static void onRuntimeState(AeroRuntimeStatePacket packet, /*? fabric{ */ /*ClientPlayNetworking.Context *//*?} neoforge{ */ IPayloadContext /*?} */ context) {
 		context./*? fabric{ */ /*client().execute *//*?} neoforge{ */ enqueueWork /*?} */
 		(() -> {
@@ -76,7 +96,7 @@ public final class AeroClientMod implements AeroClientWindRuntimeProvider {
 			));
 			getInstance().getIrisWindBridge().onRuntimeState(packet.isStreamingEnabled());
 			getInstance().getClientL2Solver().onRuntimeState(packet.isStreamingEnabled());
-			ModTemplate.xplat().sendPacketToServer(new AeroClientL2PreferencePacket(getInstance().getClientL2Solver().isExperimentalEnabled() && packet.isStreamingEnabled()));
+			ClientServerboundPacketSender.send(new AeroClientL2PreferencePacket(getInstance().getClientL2Solver().isExperimentalEnabled() && packet.isStreamingEnabled()));
 		});
 	}
 

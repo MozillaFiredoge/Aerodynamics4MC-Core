@@ -5,17 +5,12 @@ package com.aerodynamics4mc.platform.fabric;
 /*import com.aerodynamics4mc.ModTemplate;
 import com.aerodynamics4mc.client.AeroClientCommands;
 import com.aerodynamics4mc.client.AeroClientMod;
+import com.aerodynamics4mc.network.ClientPacketHandler;
+import com.aerodynamics4mc.network.ClientServerboundPacketSender;
 import com.aerodynamics4mc.network.FabricCustomPayload;
-import com.aerodynamics4mc.network.packet.AeroCoarseWindPacket;
-import com.aerodynamics4mc.network.packet.AeroFlowAnalysisPacket;
-import com.aerodynamics4mc.network.packet.AeroFlowPacket;
-import com.aerodynamics4mc.network.packet.AeroLocalWeatherPacket;
-import com.aerodynamics4mc.network.packet.AeroMesoscaleMapPacket;
-import com.aerodynamics4mc.network.packet.AeroRuntimeStatePacket;
 import com.aerodynamics4mc.particle.ModParticles;
 import com.aerodynamics4mc.client.WindDriftParticle;
 import com.aerodynamics4mc.vehicle.ModEntities;
-import com.github.razorplay.packet_handler.network.IPacket;
 import dev.kikugie.fletching_table.annotation.fabric.Entrypoint;
 import net.minecraft.client.model.geom.ModelLayers;
 import net.minecraft.client.renderer.entity.BoatRenderer;
@@ -34,20 +29,9 @@ public class FabricClientEntrypoint implements ClientModInitializer {
 
 	@Override
 	public void onInitializeClient() {
-		ClientPlayNetworking.registerGlobalReceiver(FabricCustomPayload.CUSTOM_PAYLOAD_ID, (payload, context) ->
-				context.client().execute(() -> {
-					IPacket packet = payload.packet();
-
-					switch (packet) {
-						case AeroRuntimeStatePacket pkt -> AeroClientMod.onRuntimeState(pkt, context);
-						case AeroFlowAnalysisPacket pkt -> AeroClientMod.onFlowAnalysis(pkt, context);
-						case AeroCoarseWindPacket pkt -> AeroClientMod.onCoarseWindField(pkt, context);
-						case AeroFlowPacket pkt -> AeroClientMod.onFlowField(pkt, context);
-						case AeroLocalWeatherPacket pkt -> AeroClientMod.onLocalWeather(pkt, context);
-						case AeroMesoscaleMapPacket pkt -> AeroClientMod.onMesoscaleMap(pkt, context);
-						default -> ModTemplate.LOGGER.info("Unknown server packet: {}", packet.getPacketId());
-					}
-				}));
+		ClientServerboundPacketSender.register(packet -> ClientPlayNetworking.send(new FabricCustomPayload(packet)));
+		ClientPlayNetworking.registerGlobalReceiver(FabricCustomPayload.CUSTOM_PAYLOAD_ID,
+				(payload, context) -> ClientPacketHandler.handle(payload.packet(), context));
 		ParticleFactoryRegistry.getInstance().register(ModParticles.SAND_DUST, WindDriftParticle.Provider::new);
 		ParticleFactoryRegistry.getInstance().register(ModParticles.RED_SAND_DUST, WindDriftParticle.Provider::new);
 		ParticleFactoryRegistry.getInstance().register(ModParticles.DIRT_DUST, WindDriftParticle.Provider::new);
@@ -56,6 +40,7 @@ public class FabricClientEntrypoint implements ClientModInitializer {
 		ParticleFactoryRegistry.getInstance().register(ModParticles.GRASS_MOTE, WindDriftParticle.Provider::new);
 		EntityRendererRegistry.register(ModEntities.sailboat(), context -> new BoatRenderer(context, ModelLayers.OAK_BOAT));
 		ModTemplate.onInitializeClient();
+		AeroClientMod.getInstance().onInitializeClient();
 
 		ClientTickEvents.END_CLIENT_TICK.register(minecraft -> {
 			AeroClientMod.getInstance().getClientL2Solver().onClientTick(minecraft);

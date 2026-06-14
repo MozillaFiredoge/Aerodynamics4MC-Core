@@ -1,7 +1,5 @@
 package com.aerodynamics4mc;
 
-import com.aerodynamics4mc.block.ModBlocks;
-import com.aerodynamics4mc.client.AeroClientMod;
 import com.aerodynamics4mc.network.packet.AeroClientL2PreferencePacket;
 import com.aerodynamics4mc.network.packet.AeroCoarseWindPacket;
 import com.aerodynamics4mc.network.packet.AeroFlowAnalysisPacket;
@@ -12,7 +10,6 @@ import com.aerodynamics4mc.network.packet.AeroMesoscaleMapRequestPacket;
 import com.aerodynamics4mc.network.packet.AeroRuntimeStatePacket;
 import com.aerodynamics4mc.platform.Platform;
 
-import com.aerodynamics4mc.runtime.AeroServerRuntime;
 import com.github.razorplay.packet_handler.network.IPacket;
 import com.github.razorplay.packet_handler.network.PacketTCP;
 import org.slf4j.Logger;
@@ -45,7 +42,6 @@ public class ModTemplate {
 	public static void onInitializeClient() {
 		LOGGER.info("Initializing {} Client on {}", MOD_ID, ModTemplate.xplat().loader());
 		LOGGER.debug("{}: { version: {}; friendly_name: {} }", MOD_ID, MOD_VERSION, MOD_FRIENDLY_NAME);
-		AeroClientMod.getInstance().onInitializeClient();
 	}
 
 	public static Platform xplat() {

@@ -5,7 +5,6 @@ package com.aerodynamics4mc.platform.fabric;
 /*import com.aerodynamics4mc.network.FabricCustomPayload;
 import com.aerodynamics4mc.platform.Platform;
 import com.github.razorplay.packet_handler.network.IPacket;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.server.level.ServerPlayer;
@@ -30,11 +29,6 @@ public class FabricPlatform implements Platform {
 	@Override
 	public boolean isDevelopmentEnvironment() {
 		return FabricLoader.getInstance().isDevelopmentEnvironment();
-	}
-
-	@Override
-	public void sendPacketToServer(IPacket packet) {
-		ClientPlayNetworking.send(new FabricCustomPayload(packet));
 	}
 
 	@Override

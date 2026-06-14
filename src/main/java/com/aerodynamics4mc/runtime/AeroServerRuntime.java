@@ -13,7 +13,6 @@ import com.aerodynamics4mc.api.AeroWindSamplingRules;
 import com.aerodynamics4mc.api.GameplayWindSample;
 import com.aerodynamics4mc.api.SamplePolicy;
 import com.aerodynamics4mc.api.minecraft.AeroMinecraftVectors;
-import com.aerodynamics4mc.block.ModBlocks;
 import com.aerodynamics4mc.flow.AnalysisFlowCodec;
 import com.aerodynamics4mc.network.packet.AeroCoarseWindPacket;
 import com.aerodynamics4mc.network.packet.AeroFlowAnalysisPacket;
@@ -5702,7 +5701,7 @@ public final class AeroServerRuntime {
 	}
 
 	private static boolean isSolidObstacle(ServerLevel world, BlockPos pos, BlockState state) {
-		if (state.isAir() || state.is(ModBlocks.DUCT_BLOCK)) {
+		if (state.isAir() || AeroBlockBehaviors.isDuct(state)) {
 			return false;
 		}
 		return !state.getCollisionShape(world, pos).isEmpty();

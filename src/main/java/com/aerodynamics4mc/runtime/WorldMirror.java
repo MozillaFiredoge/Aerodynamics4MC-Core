@@ -1,8 +1,5 @@
 package com.aerodynamics4mc.runtime;
 
-import com.aerodynamics4mc.block.FanBlock;
-import com.aerodynamics4mc.block.FanBlockEntity;
-import com.aerodynamics4mc.block.ModBlocks;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.ResourceKey;
@@ -200,13 +197,13 @@ final class WorldMirror {
     }
 
     synchronized void onBlockEntityLoad(BlockEntity blockEntity, ServerLevel world) {
-        if (blockEntity instanceof FanBlockEntity) {
+        if (AeroBlockBehaviors.isFanBlockEntity(blockEntity)) {
             upsertFan(world, blockEntity.getBlockPos(), blockEntity.getBlockState());
         }
     }
 
     synchronized void onBlockEntityUnload(BlockEntity blockEntity, ServerLevel world) {
-        if (blockEntity instanceof FanBlockEntity) {
+        if (AeroBlockBehaviors.isFanBlockEntity(blockEntity)) {
             removeFan(world, blockEntity.getBlockPos());
         }
     }
@@ -409,9 +406,9 @@ final class WorldMirror {
             }
         }
         for (BlockEntity blockEntity : chunk.getBlockEntities().values()) {
-            if (blockEntity instanceof FanBlockEntity && blockEntity.getBlockState().is(ModBlocks.FAN_BLOCK)) {
+            if (AeroBlockBehaviors.isFanBlockEntity(blockEntity) && isFanState(blockEntity.getBlockState())) {
                 BlockState state = blockEntity.getBlockState();
-                Direction facing = state.getValue(FanBlock.FACING);
+                Direction facing = AeroBlockBehaviors.fanFacing(state);
                 dimension.fans.put(
                     blockEntity.getBlockPos().asLong(),
                     new FanRecord(blockEntity.getBlockPos(), facing, computeDuctLength(world, blockEntity.getBlockPos(), facing))
@@ -424,7 +421,7 @@ final class WorldMirror {
         if (!isFanState(state)) {
             return;
         }
-        Direction facing = state.getValue(FanBlock.FACING);
+        Direction facing = AeroBlockBehaviors.fanFacing(state);
         dimension(world.dimension()).fans.put(
             pos.asLong(),
             new FanRecord(pos, facing, computeDuctLength(world, pos, facing))
@@ -439,11 +436,11 @@ final class WorldMirror {
     }
 
     private boolean isFanState(BlockState state) {
-        return state != null && state.is(ModBlocks.FAN_BLOCK);
+        return AeroBlockBehaviors.isFan(state);
     }
 
     private boolean isDuctState(BlockState state) {
-        return state != null && state.is(ModBlocks.DUCT_BLOCK);
+        return AeroBlockBehaviors.isDuct(state);
     }
 
     private void queueNearbyFanDuctRefreshes(ResourceKey<Level> worldKey, DimensionMirror dimension, BlockPos changedPos) {
@@ -518,7 +515,7 @@ final class WorldMirror {
                     case Y -> cursor.set(center.getX() + a, center.getY(), center.getZ() + b);
                     case Z -> cursor.set(center.getX() + a, center.getY() + b, center.getZ());
                 }
-                if (world.getBlockState(cursor).is(ModBlocks.DUCT_BLOCK)) {
+                if (AeroBlockBehaviors.isDuct(world.getBlockState(cursor))) {
                     filledRingCells++;
                 }
             }
@@ -536,7 +533,7 @@ final class WorldMirror {
 
     private boolean isSolidObstacle(ServerLevel world, BlockPos pos) {
         BlockState state = world.getBlockState(pos);
-        if (state.isAir() || state.is(ModBlocks.DUCT_BLOCK)) {
+        if (state.isAir() || AeroBlockBehaviors.isDuct(state)) {
             return false;
         }
         return !state.getCollisionShape(world, pos).isEmpty();

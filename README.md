@@ -29,6 +29,8 @@ dependencies {
 }
 ```
 
+The distributed mod jar remains an all-in-one gameplay jar for players. Its built-in blocks, particles, vehicles, and client visual code are kept behind internal source-set boundaries, but they are not a public integration surface. Add-on mods should depend only on the published API artifact and should not import `com.aerodynamics4mc.block.*`, `com.aerodynamics4mc.particle.*`, `com.aerodynamics4mc.vehicle.*`, `com.aerodynamics4mc.client.*`, or loader-specific internals. This keeps integrations portable across Minecraft versions and mod loaders.
+
 **Server‑side sampling:**
 
 ```java

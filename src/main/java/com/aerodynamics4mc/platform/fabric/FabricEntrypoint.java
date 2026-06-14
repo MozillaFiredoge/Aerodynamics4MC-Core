@@ -3,14 +3,12 @@ package com.aerodynamics4mc.platform.fabric;
 //? fabric {
 
 /*import com.aerodynamics4mc.ModTemplate;
-import com.aerodynamics4mc.block.ModBlocks;
+import com.aerodynamics4mc.content.AeroContentBootstraps;
 import com.aerodynamics4mc.network.FabricCustomPayload;
 import com.aerodynamics4mc.network.packet.AeroClientL2PreferencePacket;
 import com.aerodynamics4mc.network.packet.AeroMesoscaleMapRequestPacket;
-import com.aerodynamics4mc.particle.ModParticles;
 import com.aerodynamics4mc.runtime.AeroCommands;
 import com.aerodynamics4mc.runtime.AeroServerRuntime;
-import com.aerodynamics4mc.vehicle.ModEntities;
 import com.github.razorplay.packet_handler.network.IPacket;
 import dev.kikugie.fletching_table.annotation.fabric.Entrypoint;
 import net.fabricmc.api.ModInitializer;
@@ -30,9 +28,7 @@ public class FabricEntrypoint implements ModInitializer {
 	@Override
 	public void onInitialize() {
 		ModTemplate.onInitialize();
-		ModEntities.register();
-		ModBlocks.register();
-		ModParticles.register();
+		AeroContentBootstraps.registerBuiltinContent(ModTemplate.xplat().loader(), null);
 		FabricCustomPayload.register();
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> AeroCommands.register(dispatcher));

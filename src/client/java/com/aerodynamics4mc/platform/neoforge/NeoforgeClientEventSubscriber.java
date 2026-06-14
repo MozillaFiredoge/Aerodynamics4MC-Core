@@ -6,6 +6,8 @@ import com.aerodynamics4mc.ModTemplate;
 import com.aerodynamics4mc.client.AeroClientCommands;
 import com.aerodynamics4mc.client.AeroClientMod;
 import com.aerodynamics4mc.client.WindDriftParticle;
+import com.aerodynamics4mc.network.ClientServerboundPacketSender;
+import com.aerodynamics4mc.network.ForgeCustomPayload;
 import com.aerodynamics4mc.particle.ModParticles;
 import com.aerodynamics4mc.vehicle.ModEntities;
 import net.minecraft.client.Minecraft;
@@ -31,7 +33,13 @@ public class NeoforgeClientEventSubscriber {
 
 	@SubscribeEvent
 	public static void onClientSetup(final FMLClientSetupEvent event) {
+		ClientServerboundPacketSender.register(packet -> {
+			if (Minecraft.getInstance().getConnection() != null) {
+				Minecraft.getInstance().getConnection().send(new ForgeCustomPayload(packet));
+			}
+		});
 		ModTemplate.onInitializeClient();
+		AeroClientMod.getInstance().onInitializeClient();
 		registerClientEvents();
 	}
 

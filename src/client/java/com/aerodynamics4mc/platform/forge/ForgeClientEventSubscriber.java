@@ -3,6 +3,7 @@ package com.aerodynamics4mc.platform.forge;
 //? forge {
 
 /*import com.aerodynamics4mc.ModTemplate;
+import com.aerodynamics4mc.client.AeroClientMod;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -14,6 +15,7 @@ public class ForgeClientEventSubscriber {
 	@SubscribeEvent
 	public static void onClientSetup(final FMLClientSetupEvent event) {
 		ModTemplate.onInitializeClient();
+		AeroClientMod.getInstance().onInitializeClient();
 	}
 }
 *///?}

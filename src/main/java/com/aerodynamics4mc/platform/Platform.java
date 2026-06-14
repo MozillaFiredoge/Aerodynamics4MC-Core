@@ -20,7 +20,5 @@ public interface Platform {
 		FABRIC, NEOFORGE, FORGE, QUILT
 	}
 
-	void sendPacketToServer(IPacket packet);
-
 	void sendPacketToClient(IPacket packet, ServerPlayer player);
 }

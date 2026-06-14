@@ -4,6 +4,7 @@ import dev.kikugie.fletching_table.extension.FletchingTableExtension
 import dev.kikugie.stonecutter.StonecutterExperimentalAPI
 import dev.kikugie.stonecutter.build.StonecutterBuildExtension
 import org.gradle.api.DefaultTask
+import org.gradle.api.GradleException
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.artifacts.dsl.RepositoryHandler
@@ -15,6 +16,7 @@ import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Copy
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.OutputFile
+import org.gradle.api.tasks.SourceSet
 import org.gradle.api.tasks.TaskAction
 import org.gradle.internal.extensions.stdlib.toDefaultLowerCase
 import org.gradle.jvm.tasks.Jar
@@ -104,6 +106,8 @@ abstract class ModPlatformPlugin @Inject constructor() : Plugin<Project> {
 		configureProcessResources(ctx)
 		configureJava(ctx)
 		configureNativeResources(ctx)
+		configureBundledSourceSets()
+		registerClientIsolationCheck()
 		registerBuildAndCollectTask(ctx)
 
 		configureModPublishing(ctx)
@@ -119,6 +123,106 @@ abstract class ModPlatformPlugin @Inject constructor() : Plugin<Project> {
 			withJavadocJar()
 			sourceCompatibility = ctx.javaVersion
 			targetCompatibility = ctx.javaVersion
+		}
+	}
+
+	private fun Project.configureBundledSourceSets() {
+		val java = the<JavaPluginExtension>()
+		val sourceSets = java.sourceSets
+		val mainSourceSet = sourceSets.named(SourceSet.MAIN_SOURCE_SET_NAME).get()
+		val contentSourceSet = configureBundledSourceSet("content", mainSourceSet)
+		configureBundledSourceSet("client", mainSourceSet, contentSourceSet)
+	}
+
+	private fun Project.configureBundledSourceSet(
+		name: String,
+		mainSourceSet: SourceSet,
+		vararg upstreamSourceSets: SourceSet
+	): SourceSet {
+		val sourceSets = the<JavaPluginExtension>().sourceSets
+		val bundledSourceSet = sourceSets.findByName(name) ?: sourceSets.create(name)
+
+		configurations.named(bundledSourceSet.implementationConfigurationName) {
+			extendsFrom(configurations.getByName(mainSourceSet.implementationConfigurationName))
+		}
+		configurations.named(bundledSourceSet.compileOnlyConfigurationName) {
+			extendsFrom(configurations.getByName(mainSourceSet.compileOnlyConfigurationName))
+		}
+		configurations.named(bundledSourceSet.runtimeOnlyConfigurationName) {
+			extendsFrom(configurations.getByName(mainSourceSet.runtimeOnlyConfigurationName))
+		}
+		configurations.named(bundledSourceSet.annotationProcessorConfigurationName) {
+			extendsFrom(configurations.getByName(mainSourceSet.annotationProcessorConfigurationName))
+		}
+
+		bundledSourceSet.compileClasspath += mainSourceSet.output + mainSourceSet.compileClasspath
+		bundledSourceSet.runtimeClasspath += bundledSourceSet.output + bundledSourceSet.compileClasspath + mainSourceSet.runtimeClasspath
+		for (upstreamSourceSet in upstreamSourceSets) {
+			bundledSourceSet.compileClasspath += upstreamSourceSet.output + upstreamSourceSet.compileClasspath
+			bundledSourceSet.runtimeClasspath += upstreamSourceSet.output + upstreamSourceSet.runtimeClasspath
+		}
+		mainSourceSet.runtimeClasspath += bundledSourceSet.output
+
+		tasks.named(bundledSourceSet.compileJavaTaskName) {
+			dependsOn(tasks.named(mainSourceSet.classesTaskName))
+			for (upstreamSourceSet in upstreamSourceSets) {
+				dependsOn(tasks.named(upstreamSourceSet.classesTaskName))
+			}
+		}
+		tasks.named<Jar>("jar") {
+			dependsOn(tasks.named(bundledSourceSet.classesTaskName))
+			from(bundledSourceSet.output)
+		}
+		tasks.named<Jar>("sourcesJar") {
+			from(bundledSourceSet.allSource)
+		}
+		return bundledSourceSet
+	}
+
+	private fun Project.registerClientIsolationCheck() {
+		val mainSourceSet = the<JavaPluginExtension>().sourceSets.named(SourceSet.MAIN_SOURCE_SET_NAME)
+		val forbiddenReferences = listOf(
+				"com.aerodynamics4mc.client.",
+				"com.aerodynamics4mc.mixin.client.",
+				"com.aerodynamics4mc.block.",
+				"com.aerodynamics4mc.particle.",
+				"com.aerodynamics4mc.vehicle.",
+				"net.minecraft.client.",
+			"net.fabricmc.fabric.api.client.",
+			"net.neoforged.neoforge.client.",
+			"ClientModInitializer",
+			"RegisterClientPayloadHandlersEvent",
+			"Dist.CLIENT"
+		)
+
+		val verifyTask = tasks.register("verifyMainSourceSetHasNoClientOnlyReferences") {
+			group = "verification"
+			description = "Fails when main source set imports or references client-only code."
+			dependsOn("stonecutterGenerate")
+			inputs.files(mainSourceSet.map { it.allJava })
+
+			doLast {
+				val offenders = mainSourceSet.get().allJava.files
+					.asSequence()
+					.filter { it.isFile }
+					.flatMap { file ->
+						val text = file.readText()
+						forbiddenReferences.asSequence()
+							.filter(text::contains)
+							.map { reference -> "${file.relativeTo(rootProject.rootDir)} contains $reference" }
+					}
+					.toList()
+
+				if (offenders.isNotEmpty()) {
+					throw GradleException(
+						"Client-only references must live in src/client, not the main source set:\n" +
+								offenders.joinToString("\n")
+					)
+				}
+			}
+		}
+		tasks.named("check") {
+			dependsOn(verifyTask)
 		}
 	}
 
