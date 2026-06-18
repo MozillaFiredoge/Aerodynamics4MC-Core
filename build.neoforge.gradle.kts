@@ -97,6 +97,9 @@ neoForge {
 
 repositories {
 	mavenCentral()
+	strictMaven("https://maven.ryanhcode.dev/releases", "dev.ryanhcode.sable", "dev.ryanhcode.sable-companion") {
+		name = "RyanHCode"
+	}
 	strictMaven("https://api.modrinth.com/maven", "maven.modrinth") { name = "Modrinth" }
 	strictMaven("https://jitpack.io") { name = "Jitpack" }
 }

@@ -5,6 +5,7 @@ import com.aerodynamics4mc.api.AeroWindSamplingRules;
 import com.aerodynamics4mc.api.minecraft.AeroMinecraftVectors;
 import com.aerodynamics4mc.network.packet.AeroCoarseWindPacket;
 import com.aerodynamics4mc.runtime.AeroBlockBehaviors;
+import com.aerodynamics4mc.runtime.AerodynamicSolver;
 import com.aerodynamics4mc.runtime.NativeSimulationBridge;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -264,7 +265,6 @@ public final class ClientL2Solver {
     );
     private static final float DT_SECONDS = 0.05f;
     private static final float DX_METERS = 1.0f;
-    private static final float NATIVE_VELOCITY_SCALE = DX_METERS / DT_SECONDS;
     private static final float ATLAS_VELOCITY_RANGE = 5.6f;
     private static final float ATLAS_PRESSURE_RANGE = 0.03f;
     private static final float ZERO_DYNAMIC_MAX_SPEED_EPS_MPS = 0.02f;
@@ -1103,16 +1103,7 @@ public final class ClientL2Solver {
                     brickY,
                     brickZ,
                     java.util.Arrays.copyOf(obstacle, obstacle.length),
-                    java.util.Arrays.copyOf(surfaceKind, surfaceKind.length),
-                    java.util.Arrays.copyOf(openFaceMask, openFaceMask.length),
-                    java.util.Arrays.copyOf(emitterPower, emitterPower.length),
-                    java.util.Arrays.copyOf(sourceFanDirection, sourceFanDirection.length),
-                    java.util.Arrays.copyOf(sourceEmitterPower, sourceEmitterPower.length),
-                    java.util.Arrays.copyOf(faceSkyExposure, faceSkyExposure.length),
-                    java.util.Arrays.copyOf(faceDirectExposure, faceDirectExposure.length),
-                    java.util.Arrays.copyOf(flowState, flowState.length),
-                    java.util.Arrays.copyOf(airTemperature, airTemperature.length),
-                    java.util.Arrays.copyOf(surfaceTemperature, surfaceTemperature.length)
+                    java.util.Arrays.copyOf(flowState, flowState.length)
             ));
             stagedDynamicUploaded = true;
             return BrickPreparationResult.IN_PROGRESS;
@@ -1226,9 +1217,9 @@ public final class ClientL2Solver {
             if (!coarse.hasFlow()) {
                 return false;
             }
-            stagedSeedVx = coarse.velocityX() / NATIVE_VELOCITY_SCALE;
-            stagedSeedVy = coarse.velocityY() / NATIVE_VELOCITY_SCALE;
-            stagedSeedVz = coarse.velocityZ() / NATIVE_VELOCITY_SCALE;
+            stagedSeedVx = coarse.velocityX();
+            stagedSeedVy = coarse.velocityY();
+            stagedSeedVz = coarse.velocityZ();
             stagedSeedPressure = coarse.pressure();
             stagedCoarseSeedReady = true;
         }
@@ -1380,8 +1371,6 @@ public final class ClientL2Solver {
                     brickY,
                     brickZ,
                     java.util.Arrays.copyOf(flowState, flowState.length),
-                    java.util.Arrays.copyOf(airTemperature, airTemperature.length),
-                    java.util.Arrays.copyOf(surfaceTemperature, surfaceTemperature.length),
                     boundaryRefreshMaxCoarseSpeed
             ));
             activeBrickBoundaryRefreshPending[index] = false;
@@ -1425,8 +1414,6 @@ public final class ClientL2Solver {
         boundaryRefreshCursor = 0;
         boundaryRefreshMaxCoarseSpeed = 0.0f;
         java.util.Arrays.fill(flowState, 0.0f);
-        java.util.Arrays.fill(airTemperature, 0.0f);
-        java.util.Arrays.fill(surfaceTemperature, 0.0f);
     }
 
     private BoundaryReferenceBuildResult buildBoundaryReferenceCells(Identifier dimensionId) {
@@ -1452,9 +1439,9 @@ public final class ClientL2Solver {
                 if (!coarse.hasFlow()) {
                     return BoundaryReferenceBuildResult.WAITING_FOR_COARSE;
                 }
-                flowState[base] = coarse.velocityX() / NATIVE_VELOCITY_SCALE;
-                flowState[base + 1] = coarse.velocityY() / NATIVE_VELOCITY_SCALE;
-                flowState[base + 2] = coarse.velocityZ() / NATIVE_VELOCITY_SCALE;
+                flowState[base] = coarse.velocityX();
+                flowState[base + 1] = coarse.velocityY();
+                flowState[base + 2] = coarse.velocityZ();
                 flowState[base + 3] = coarse.pressure();
                 float speed = (float) AeroMinecraftVectors.velocity(coarse).length();
                 if (Float.isFinite(speed) && speed > boundaryRefreshMaxCoarseSpeed) {
@@ -1604,9 +1591,29 @@ public final class ClientL2Solver {
         lastFanPatchCellCount = fanSourcePatches;
         lastHeatPatchCellCount = heatSourcePatches;
         lastStaticPatchSubmitClientGameTime = clientGameTime;
-        cancelBoundaryReferenceRefresh();
-        worker.submitWorldDeltas(worldKey, submitted);
+        invalidateActiveBricksForStaticChange();
         return StaticPatchFlushResult.SUBMITTED;
+    }
+
+    private void invalidateActiveBricksForStaticChange() {
+        if (activeBrickCount <= 0) {
+            return;
+        }
+        java.util.Arrays.fill(activeBrickReady, 0, activeBrickCount, false);
+        java.util.Arrays.fill(activeBrickRefreshPending, 0, activeBrickCount, false);
+        java.util.Arrays.fill(activeBrickBoundaryRefreshPending, 0, activeBrickCount, false);
+        activeHintUploaded = false;
+        prepareCursor = 0;
+        refreshCursor = 0;
+        publishCursor = 0;
+        cancelStagedPreparation();
+        cancelBoundaryReferenceRefresh();
+        lastSolveClientGameTime = Long.MIN_VALUE;
+        lastPublishedClientGameTime = Long.MIN_VALUE;
+        lastBoundaryRefreshClientGameTime = Long.MIN_VALUE;
+        stressStaticSubmittedForActiveSet = false;
+        visualizer.clearLocalFlowFields();
+        worker.reset();
     }
 
     private boolean shouldDelayPendingStaticPatches(long clientGameTime) {
@@ -2073,38 +2080,6 @@ public final class ClientL2Solver {
         return Math.max(powerWatts, 0.0f);
     }
 
-    private CoarseSeedStats fillFlowStateFromCoarse(Identifier dimensionId, BlockPos origin) {
-        java.util.Arrays.fill(flowState, 0.0f);
-        java.util.Arrays.fill(airTemperature, 0.0f);
-        java.util.Arrays.fill(surfaceTemperature, 0.0f);
-        float maxCoarseSpeed = 0.0f;
-        for (int x = 0; x < BRICK_SIZE; x++) {
-            for (int y = 0; y < BRICK_SIZE; y++) {
-                for (int z = 0; z < BRICK_SIZE; z++) {
-                    int cell = cellIndex(x, y, z);
-                    if (obstacle[cell] != 0) {
-                        continue;
-                    }
-                    Vec3 pos = new Vec3(origin.getX() + x + 0.5, origin.getY() + y + 0.5, origin.getZ() + z + 0.5);
-                    AeroWindSample coarse = visualizer.sampleServerCoarseFlow(dimensionId, pos);
-                    if (!coarse.hasFlow()) {
-                        return null;
-                    }
-                    int base = cell * FLOW_CHANNELS;
-                    flowState[base] = coarse.velocityX() / NATIVE_VELOCITY_SCALE;
-                    flowState[base + 1] = coarse.velocityY() / NATIVE_VELOCITY_SCALE;
-                    flowState[base + 2] = coarse.velocityZ() / NATIVE_VELOCITY_SCALE;
-                    flowState[base + 3] = coarse.pressure();
-                    float speed = (float) AeroMinecraftVectors.velocity(coarse).length();
-                    if (Float.isFinite(speed) && speed > maxCoarseSpeed) {
-                        maxCoarseSpeed = speed;
-                    }
-                }
-            }
-        }
-        return new CoarseSeedStats(maxCoarseSpeed);
-    }
-
     private boolean isSolidObstacle(ClientLevel world, BlockPos pos, BlockState state) {
         if (state.isAir() || AeroBlockBehaviors.isDuct(state)) {
             return false;
@@ -2123,9 +2098,9 @@ public final class ClientL2Solver {
     private static float maxFlowSpeedMetersPerSecond(float[] state) {
         float maxSpeed = 0.0f;
         for (int base = 0; base + 2 < state.length; base += FLOW_CHANNELS) {
-            float vx = state[base] * NATIVE_VELOCITY_SCALE;
-            float vy = state[base + 1] * NATIVE_VELOCITY_SCALE;
-            float vz = state[base + 2] * NATIVE_VELOCITY_SCALE;
+            float vx = state[base];
+            float vy = state[base + 1];
+            float vz = state[base + 2];
             float speed = (float) Math.sqrt(vx * vx + vy * vy + vz * vz);
             if (Float.isFinite(speed) && speed > maxSpeed) {
                 maxSpeed = speed;
@@ -2157,9 +2132,6 @@ public final class ClientL2Solver {
     private long worldKey(Identifier dimensionId) {
         long value = dimensionId.hashCode();
         return value == 0L ? 1L : value;
-    }
-
-    private record CoarseSeedStats(float maxCoarseSpeedMetersPerSecond) {
     }
 
     private record StaticBrickCacheKey(Identifier dimensionId, int brickX, int brickY, int brickZ) {
@@ -2261,16 +2233,7 @@ public final class ClientL2Solver {
             int brickY,
             int brickZ,
             byte[] obstacle,
-            byte[] surfaceKind,
-            short[] openFaceMask,
-            float[] emitterPower,
-            byte[] sourceFanDirection,
-            float[] sourceEmitterPower,
-            byte[] faceSkyExposure,
-            byte[] faceDirectExposure,
-            float[] flowState,
-            float[] airTemperature,
-            float[] surfaceTemperature
+            float[] flowState
     ) implements WorkerCommand {
     }
 
@@ -2280,8 +2243,6 @@ public final class ClientL2Solver {
             int brickY,
             int brickZ,
             float[] flowState,
-            float[] airTemperature,
-            float[] surfaceTemperature,
             float maxCoarseSpeedMetersPerSecond
     ) implements WorkerCommand {
     }
@@ -2301,6 +2262,26 @@ public final class ClientL2Solver {
     private record LocalAtlasSnapshot(Identifier dimensionId, BlockPos origin, int sampleStride, short[] packedFlow) {
     }
 
+    private record WorkerSolverKey(long worldKey, int brickX, int brickY, int brickZ) {
+    }
+
+    private record FlowBoundary(float vx, float vy, float vz) {
+    }
+
+    private static final class WorkerSolver {
+        private final long handle;
+        private float inletVx;
+        private float inletVy;
+        private float inletVz;
+
+        private WorkerSolver(long handle, float inletVx, float inletVy, float inletVz) {
+            this.handle = handle;
+            this.inletVx = inletVx;
+            this.inletVy = inletVy;
+            this.inletVz = inletVz;
+        }
+    }
+
     private record WorkerDeltaKey(int type, int x, int y, int z, int data0) {
         static WorkerDeltaKey of(NativeSimulationBridge.WorldDelta delta) {
             return new WorkerDeltaKey(delta.type(), delta.x(), delta.y(), delta.z(), delta.data0());
@@ -2311,19 +2292,15 @@ public final class ClientL2Solver {
         private final NativeSimulationBridge bridge = new NativeSimulationBridge();
         private final BlockingQueue<WorkerCommand> commands = new ArrayBlockingQueue<>(WORKER_QUEUE_CAPACITY);
         private final ConcurrentLinkedQueue<LocalAtlasSnapshot> atlases = new ConcurrentLinkedQueue<>();
-        private final float[] workerFlowState = new float[CELL_COUNT * FLOW_CHANNELS];
-        private final float[] workerAirTemperature = new float[CELL_COUNT];
-        private final float[] workerSurfaceTemperature = new float[CELL_COUNT];
+        private final LinkedHashMap<WorkerSolverKey, WorkerSolver> solvers = new LinkedHashMap<>();
         private volatile boolean running;
         private volatile String lastError = "-";
         private volatile String lastRuntimeInfo = "-";
-        private volatile NativeSimulationBridge.BrickWorldRuntimeStatus lastNativeStatus;
         private volatile long processedCommands;
         private volatile long droppedCommands;
         private volatile long publishedAtlases;
         private volatile long lastStepNanos;
         private volatile long lastPublishNanos;
-        private long serviceKey;
         private Thread thread;
 
         boolean isNativeLoaded() {
@@ -2389,7 +2366,7 @@ public final class ClientL2Solver {
                     + ",published=" + publishedAtlases
                     + ",lastStepMs=" + formatMillis(lastStepNanos)
                     + ",lastPublishMs=" + formatMillis(lastPublishNanos)
-                    + ",native=" + formatNativeStatus(lastNativeStatus)
+                    + ",solvers=" + solvers.size()
                     + ",runtime=" + lastRuntimeInfo
                     + ",error=" + lastError;
         }
@@ -2545,156 +2522,106 @@ public final class ClientL2Solver {
         private void handleReset() {
             releaseService();
             atlases.clear();
-            lastNativeStatus = null;
             lastRuntimeInfo = "-";
             lastError = "-";
         }
 
         private boolean ensureRuntime(long worldKey) {
-            if (serviceKey == 0L) {
-                serviceKey = bridge.createService();
-            }
-            if (serviceKey == 0L) {
-                lastError = "failed to create native service";
+            if (!bridge.isLoaded()) {
+                lastError = bridge.getLoadError();
                 return false;
             }
-            if (!bridge.ensureBrickWorldRuntime(serviceKey, worldKey, BRICK_SIZE, DX_METERS, DT_SECONDS)) {
-                lastError = "ensureBrickWorldRuntime failed: " + bridge.lastError();
-                return false;
-            }
-            if (!bridge.setBrickWorldSolverMode(serviceKey, worldKey, CLIENT_L2_MODE.nativeSolverMode())) {
-                lastError = "setBrickWorldSolverMode failed: " + bridge.lastError();
-                return false;
-            }
+            lastRuntimeInfo = bridge.runtimeInfo();
             return true;
         }
 
         private void handleActiveHints(ActiveHintsCommand command) {
-            if (!ensureRuntime(command.worldKey())) {
-                return;
-            }
-            if (!bridge.setBrickWorldExactActiveHints(serviceKey, command.worldKey(), BRICK_SIZE, command.activeHintCoords())) {
-                lastError = "setBrickWorldExactActiveHints failed: " + bridge.lastError();
-                return;
-            }
-            updateNativeStatus(command.worldKey());
+            ensureRuntime(command.worldKey());
         }
 
         private void handleWorldDeltas(WorldDeltasCommand command) {
-            if (!ensureRuntime(command.worldKey())) {
-                return;
-            }
-            if (!bridge.submitWorldDeltas(serviceKey, command.deltas())) {
-                lastError = "submitWorldDeltas failed: " + bridge.lastError();
-                return;
-            }
-            updateNativeStatus(command.worldKey());
+            ensureRuntime(command.worldKey());
         }
 
         private void handleBrickSeed(BrickSeedCommand command) {
             if (!ensureRuntime(command.worldKey())) {
                 return;
             }
-            if (!bridge.uploadBrickWorldStaticBrickWithSources(
-                    serviceKey,
+            WorkerSolverKey key = new WorkerSolverKey(
                     command.worldKey(),
-                    BRICK_SIZE,
                     command.brickX(),
                     command.brickY(),
-                    command.brickZ(),
-                    command.obstacle(),
-                    command.surfaceKind(),
-                    command.openFaceMask(),
-                    command.emitterPower(),
-                    command.sourceFanDirection(),
-                    command.sourceEmitterPower(),
-                    command.faceSkyExposure(),
-                    command.faceDirectExposure()
-            )) {
-                lastError = "uploadBrickWorldStaticBrick failed: " + bridge.lastError();
-                return;
+                    command.brickZ()
+            );
+            WorkerSolver solver = solvers.get(key);
+            if (solver == null) {
+                long handle = bridge.createWindTunnelSolver(BRICK_SIZE, BRICK_SIZE, BRICK_SIZE, DX_METERS, DT_SECONDS);
+                if (handle == 0L) {
+                    lastError = "createWindTunnelSolver failed: " + bridge.windTunnelLastError();
+                    return;
+                }
+                FlowBoundary boundary = boundaryFromFlowState(command.flowState(), command.obstacle());
+                solver = new WorkerSolver(handle, boundary.vx(), boundary.vy(), boundary.vz());
+                solvers.put(key, solver);
+            } else {
+                FlowBoundary boundary = boundaryFromFlowState(command.flowState(), command.obstacle());
+                solver.inletVx = boundary.vx();
+                solver.inletVy = boundary.vy();
+                solver.inletVz = boundary.vz();
             }
-            if (!bridge.uploadBrickWorldDynamicBrick(
-                    serviceKey,
-                    command.worldKey(),
+            if (!bridge.setWindTunnelSolidMask(
+                    solver.handle,
                     BRICK_SIZE,
-                    command.brickX(),
-                    command.brickY(),
-                    command.brickZ(),
-                    command.flowState(),
-                    command.airTemperature(),
-                    command.surfaceTemperature()
-            )) {
-                lastError = "uploadBrickWorldDynamicBrick failed: " + bridge.lastError();
-                return;
-            }
-            if (!bridge.uploadBrickWorldBoundaryReferenceBrick(
-                    serviceKey,
-                    command.worldKey(),
                     BRICK_SIZE,
-                    command.brickX(),
-                    command.brickY(),
-                    command.brickZ(),
-                    command.flowState(),
-                    command.airTemperature(),
-                    command.surfaceTemperature()
+                    BRICK_SIZE,
+                    command.obstacle()
             )) {
-                lastError = "uploadBrickWorldBoundaryReferenceBrick failed: " + bridge.lastError();
+                lastError = "setWindTunnelSolidMask failed: " + bridge.windTunnelLastError();
                 return;
             }
-            updateNativeStatus(command.worldKey());
+            if (!bridge.setWindTunnelFlowState(
+                    solver.handle,
+                    BRICK_SIZE,
+                    BRICK_SIZE,
+                    BRICK_SIZE,
+                    command.flowState()
+            )) {
+                lastError = "setWindTunnelFlowState failed: " + bridge.windTunnelLastError();
+                return;
+            }
+            lastRuntimeInfo = bridge.runtimeInfo();
         }
 
         private void handleBoundaryReference(BoundaryReferenceCommand command) {
             if (!ensureRuntime(command.worldKey())) {
                 return;
             }
-            if (!bridge.uploadBrickWorldBoundaryReferenceBrick(
-                    serviceKey,
+            WorkerSolver solver = solvers.get(new WorkerSolverKey(
                     command.worldKey(),
-                    BRICK_SIZE,
                     command.brickX(),
                     command.brickY(),
-                    command.brickZ(),
-                    command.flowState(),
-                    command.airTemperature(),
-                    command.surfaceTemperature()
-            )) {
-                lastError = "boundary reference refresh failed: " + bridge.lastError();
+                    command.brickZ()
+            ));
+            if (solver == null) {
                 return;
             }
-            if (command.maxCoarseSpeedMetersPerSecond() >= COARSE_RESEED_MIN_SPEED_MPS
-                    && shouldReseedZeroDynamicBrick(command)) {
-                bridge.uploadBrickWorldDynamicBrick(
-                        serviceKey,
-                        command.worldKey(),
+            FlowBoundary boundary = boundaryFromFlowState(command.flowState(), null);
+            if (command.maxCoarseSpeedMetersPerSecond() >= COARSE_RESEED_MIN_SPEED_MPS) {
+                if (!bridge.setWindTunnelFlowState(
+                        solver.handle,
                         BRICK_SIZE,
-                        command.brickX(),
-                        command.brickY(),
-                        command.brickZ(),
-                        command.flowState(),
-                        command.airTemperature(),
-                        command.surfaceTemperature()
-                );
+                        BRICK_SIZE,
+                        BRICK_SIZE,
+                        command.flowState()
+                )) {
+                    lastError = "boundary setWindTunnelFlowState failed: " + bridge.windTunnelLastError();
+                    return;
+                }
             }
-            updateNativeStatus(command.worldKey());
-        }
-
-        private boolean shouldReseedZeroDynamicBrick(BoundaryReferenceCommand command) {
-            if (!bridge.copyBrickWorldDynamicBrick(
-                    serviceKey,
-                    command.worldKey(),
-                    BRICK_SIZE,
-                    command.brickX(),
-                    command.brickY(),
-                    command.brickZ(),
-                    workerFlowState,
-                    workerAirTemperature,
-                    workerSurfaceTemperature
-            )) {
-                return true;
-            }
-            return maxFlowSpeedMetersPerSecond(workerFlowState) < ZERO_DYNAMIC_MAX_SPEED_EPS_MPS;
+            solver.inletVx = boundary.vx();
+            solver.inletVy = boundary.vy();
+            solver.inletVz = boundary.vz();
+            lastRuntimeInfo = bridge.runtimeInfo();
         }
 
         private void handleStep(StepCommand command) {
@@ -2702,15 +2629,30 @@ public final class ClientL2Solver {
                 return;
             }
             long start = System.nanoTime();
-            if (!bridge.stepBrickWorldRuntime(serviceKey, command.worldKey(), Math.max(1, command.stepCount()))) {
-                lastError = "stepBrickWorldRuntime failed: " + bridge.lastError();
-                return;
+            int steps = Math.max(1, command.stepCount());
+            for (Map.Entry<WorkerSolverKey, WorkerSolver> entry : solvers.entrySet()) {
+                if (entry.getKey().worldKey() != command.worldKey()) {
+                    continue;
+                }
+                WorkerSolver solver = entry.getValue();
+                if (!bridge.advanceWindTunnel(
+                        solver.handle,
+                        steps,
+                        solver.inletVx,
+                        solver.inletVy,
+                        solver.inletVz,
+                        AerodynamicSolver.DEFAULT_AIR_DENSITY_KG_M3,
+                        AerodynamicSolver.DEFAULT_AIR_KINEMATIC_VISCOSITY_M2_S
+                )) {
+                    lastError = "advanceWindTunnel failed: " + bridge.windTunnelLastError();
+                    return;
+                }
             }
             lastStepNanos = System.nanoTime() - start;
             if (command.publishTargets().length > 0) {
                 publishTargets(command.worldKey(), command.publishTargets());
             }
-            updateNativeStatus(command.worldKey());
+            lastRuntimeInfo = bridge.runtimeInfo();
         }
 
         private void publishTargets(long worldKey, PublishTarget[] targets) {
@@ -2718,32 +2660,28 @@ public final class ClientL2Solver {
             for (PublishTarget target : targets) {
                 int sampleStride = LOCAL_PUBLISH_SAMPLE_STRIDE;
                 short[] packedFlow = new short[packedValueCount(BRICK_SIZE, sampleStride)];
-                if (!bridge.copyBrickWorldPackedFlowAtlas(
-                        serviceKey,
+                float[] flowAtlas = new float[packedFlow.length];
+                WorkerSolver solver = solvers.get(new WorkerSolverKey(
                         worldKey,
-                        BRICK_SIZE,
                         target.brickX(),
                         target.brickY(),
-                        target.brickZ(),
-                        sampleStride,
-                        packedFlow
-                )) {
-                    if (!bridge.copyBrickWorldDynamicBrick(
-                            serviceKey,
-                            worldKey,
-                            BRICK_SIZE,
-                            target.brickX(),
-                            target.brickY(),
-                            target.brickZ(),
-                            workerFlowState,
-                            workerAirTemperature,
-                            workerSurfaceTemperature
-                    )) {
-                        lastError = "copyBrickWorldDynamicBrick failed: " + bridge.lastError();
-                        continue;
-                    }
-                    packFlowFromWorkerState(sampleStride, packedFlow);
+                        target.brickZ()
+                ));
+                if (solver == null) {
+                    continue;
                 }
+                if (!bridge.extractWindTunnelFlowAtlas(
+                        solver.handle,
+                        BRICK_SIZE,
+                        BRICK_SIZE,
+                        BRICK_SIZE,
+                        sampleStride,
+                        flowAtlas
+                )) {
+                    lastError = "extractWindTunnelFlowAtlas failed: " + bridge.windTunnelLastError();
+                    continue;
+                }
+                packFlowAtlas(flowAtlas, packedFlow);
                 atlases.offer(new LocalAtlasSnapshot(target.dimensionId(), target.origin(), sampleStride, packedFlow));
                 publishedAtlases++;
             }
@@ -2755,50 +2693,53 @@ public final class ClientL2Solver {
             return atlasResolution * atlasResolution * atlasResolution * PACKED_CHANNELS;
         }
 
-        private void packFlowFromWorkerState(int sampleStride, short[] packedFlow) {
-            int atlasResolution = (BRICK_SIZE + sampleStride - 1) / sampleStride;
-            int dstBase = 0;
-            for (int x = 0; x < atlasResolution; x++) {
-                int gx = Math.min(BRICK_SIZE - 1, x * sampleStride);
-                for (int y = 0; y < atlasResolution; y++) {
-                    int gy = Math.min(BRICK_SIZE - 1, y * sampleStride);
-                    for (int z = 0; z < atlasResolution; z++) {
-                        int gz = Math.min(BRICK_SIZE - 1, z * sampleStride);
-                        int srcBase = cellIndex(gx, gy, gz) * FLOW_CHANNELS;
-                        packedFlow[dstBase] = quantizeSignedToShort(
-                                workerFlowState[srcBase] * NATIVE_VELOCITY_SCALE,
-                                ATLAS_VELOCITY_RANGE
-                        );
-                        packedFlow[dstBase + 1] = quantizeSignedToShort(
-                                workerFlowState[srcBase + 1] * NATIVE_VELOCITY_SCALE,
-                                ATLAS_VELOCITY_RANGE
-                        );
-                        packedFlow[dstBase + 2] = quantizeSignedToShort(
-                                workerFlowState[srcBase + 2] * NATIVE_VELOCITY_SCALE,
-                                ATLAS_VELOCITY_RANGE
-                        );
-                        packedFlow[dstBase + 3] = quantizeSignedToShort(workerFlowState[srcBase + 3], ATLAS_PRESSURE_RANGE);
-                        dstBase += PACKED_CHANNELS;
-                    }
-                }
+        private FlowBoundary boundaryFromFlowState(float[] flowState, byte[] solidMask) {
+            if (flowState == null || flowState.length < FLOW_CHANNELS) {
+                return new FlowBoundary(0.0f, 0.0f, 0.0f);
             }
+            float sumX = 0.0f;
+            float sumY = 0.0f;
+            float sumZ = 0.0f;
+            int samples = 0;
+            int cellCount = Math.min(flowState.length / FLOW_CHANNELS, solidMask == null ? CELL_COUNT : solidMask.length);
+            for (int cell = 0; cell < cellCount; cell++) {
+                if (solidMask != null && solidMask[cell] != 0) {
+                    continue;
+                }
+                int base = cell * FLOW_CHANNELS;
+                float vx = flowState[base];
+                float vy = flowState[base + 1];
+                float vz = flowState[base + 2];
+                if (!Float.isFinite(vx) || !Float.isFinite(vy) || !Float.isFinite(vz)) {
+                    continue;
+                }
+                sumX += vx;
+                sumY += vy;
+                sumZ += vz;
+                samples++;
+            }
+            if (samples <= 0) {
+                return new FlowBoundary(0.0f, 0.0f, 0.0f);
+            }
+            float inv = 1.0f / samples;
+            return new FlowBoundary(sumX * inv, sumY * inv, sumZ * inv);
         }
 
-        private void updateNativeStatus(long worldKey) {
-            if (serviceKey == 0L) {
-                lastNativeStatus = null;
-                lastRuntimeInfo = "-";
-                return;
+        private void packFlowAtlas(float[] flowAtlas, short[] packedFlow) {
+            int values = Math.min(flowAtlas.length, packedFlow.length);
+            for (int base = 0; base + 3 < values; base += FLOW_CHANNELS) {
+                packedFlow[base] = quantizeSignedToShort(flowAtlas[base], ATLAS_VELOCITY_RANGE);
+                packedFlow[base + 1] = quantizeSignedToShort(flowAtlas[base + 1], ATLAS_VELOCITY_RANGE);
+                packedFlow[base + 2] = quantizeSignedToShort(flowAtlas[base + 2], ATLAS_VELOCITY_RANGE);
+                packedFlow[base + 3] = quantizeSignedToShort(flowAtlas[base + 3], ATLAS_PRESSURE_RANGE);
             }
-            lastNativeStatus = bridge.getBrickWorldRuntimeStatus(serviceKey, worldKey);
-            lastRuntimeInfo = bridge.runtimeInfo();
         }
 
         private void releaseService() {
-            if (serviceKey != 0L) {
-                bridge.releaseService(serviceKey);
-                serviceKey = 0L;
+            for (WorkerSolver solver : solvers.values()) {
+                bridge.destroyWindTunnelSolver(solver.handle);
             }
+            solvers.clear();
         }
     }
 
@@ -2909,19 +2850,6 @@ public final class ClientL2Solver {
                 + ":patchesPerTick=" + STRESS_PATCHES_PER_TICK
                 + ":interval=" + STRESS_INTERVAL_TICKS
                 + ":queueLimit=" + STRESS_QUEUE_BACKLOG_LIMIT;
-    }
-
-    private String formatNativeStatus(NativeSimulationBridge.BrickWorldRuntimeStatus status) {
-        if (status == null) {
-            return "none";
-        }
-        return "known=" + status.knownBrickCount()
-                + ",hints=" + status.activeHintCount()
-                + ",active=" + status.activeBrickCount()
-                + ",dirty=" + status.geometryDirtyCount()
-                + ",forcingDirty=" + status.forcingDirtyCount()
-                + ",reinit=" + status.pendingReinitCount()
-                + ",epoch=" + status.epoch();
     }
 
     private static String formatMillis(long nanos) {

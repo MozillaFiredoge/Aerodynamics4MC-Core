@@ -898,6 +898,16 @@ public class AeroCommands {
 		appendJsonArray(builder, "abl_stability", snapshot.ablStability(), true);
 		appendJsonArray(builder, "abl_mixing_strength", snapshot.ablMixingStrength(), true);
 		appendJsonArray(builder, "abl_profile_blend", snapshot.ablProfileBlend(), true);
+		appendJsonArray(builder, "terrain_coast_breeze_x", snapshot.terrainCoastBreezeX(), true);
+		appendJsonArray(builder, "terrain_coast_breeze_z", snapshot.terrainCoastBreezeZ(), true);
+		appendJsonArray(builder, "terrain_ridge_wind_x", snapshot.terrainRidgeWindX(), true);
+		appendJsonArray(builder, "terrain_ridge_wind_z", snapshot.terrainRidgeWindZ(), true);
+		appendJsonArray(builder, "terrain_valley_wind_x", snapshot.terrainValleyWindX(), true);
+		appendJsonArray(builder, "terrain_valley_wind_z", snapshot.terrainValleyWindZ(), true);
+		appendJsonArray(builder, "terrain_lee_shelter", snapshot.terrainLeeShelter(), true);
+		appendJsonArray(builder, "terrain_updraft", snapshot.terrainUpdraft(), true);
+		appendJsonArray(builder, "terrain_turbulence", snapshot.terrainTurbulence(), true);
+		appendJsonArray(builder, "terrain_roughness_drag", snapshot.terrainRoughnessDrag(), true);
 		appendJsonArray(builder, "forcing_nested_ambient_delta_kelvin", snapshot.forcingNestedAmbientDeltaKelvin(), true);
 		appendJsonArray(builder, "forcing_nested_surface_delta_kelvin", snapshot.forcingNestedSurfaceDeltaKelvin(), true);
 		appendJsonArray(builder, "forcing_nested_wind_x_delta", snapshot.forcingNestedWindXDelta(), true);

@@ -11096,6 +11096,36 @@ JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_runtime_NativeSimulationBrid
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_runtime_NativeSimulationBridge_nativeSetWindTunnelFlowState(
+    JNIEnv* env,
+    jclass,
+    jlong solver_handle,
+    jfloatArray flow_state
+) {
+    clear_wind_tunnel_last_error();
+    if (solver_handle == 0 || !flow_state) {
+        set_wind_tunnel_last_error("set_wind_tunnel_flow_state: missing solver handle or flow state");
+        return JNI_FALSE;
+    }
+    const jsize length = env->GetArrayLength(flow_state);
+    jboolean is_copy = JNI_FALSE;
+    jfloat* values = env->GetFloatArrayElements(flow_state, &is_copy);
+    if (!values) {
+        set_wind_tunnel_last_error("set_wind_tunnel_flow_state: failed to pin Java float array");
+        return JNI_FALSE;
+    }
+    const int ok = aero_solver_set_flow_state(
+        static_cast<long long>(solver_handle),
+        values,
+        static_cast<int>(length)
+    );
+    env->ReleaseFloatArrayElements(flow_state, values, JNI_ABORT);
+    if (!ok) {
+        set_wind_tunnel_last_error(wind_tunnel_solver_error("set_wind_tunnel_flow_state"));
+    }
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_runtime_NativeSimulationBridge_nativeAdvanceWindTunnel(
     JNIEnv*,
     jclass,
@@ -11127,6 +11157,38 @@ JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_runtime_NativeSimulationBrid
     );
     if (!ok) {
         set_wind_tunnel_last_error(wind_tunnel_solver_error("advance_wind_tunnel"));
+    }
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_runtime_NativeSimulationBridge_nativeExtractWindTunnelFlowAtlas(
+    JNIEnv* env,
+    jclass,
+    jlong solver_handle,
+    jint sample_stride,
+    jfloatArray out_flow_atlas
+) {
+    clear_wind_tunnel_last_error();
+    if (solver_handle == 0 || sample_stride <= 0 || !out_flow_atlas) {
+        set_wind_tunnel_last_error("extract_wind_tunnel_flow_atlas: invalid handle, stride, or output buffer");
+        return JNI_FALSE;
+    }
+    const jsize length = env->GetArrayLength(out_flow_atlas);
+    jboolean is_copy = JNI_FALSE;
+    jfloat* values = env->GetFloatArrayElements(out_flow_atlas, &is_copy);
+    if (!values) {
+        set_wind_tunnel_last_error("extract_wind_tunnel_flow_atlas: failed to pin Java float array");
+        return JNI_FALSE;
+    }
+    const int ok = aero_solver_extract_flow_atlas(
+        static_cast<long long>(solver_handle),
+        static_cast<int>(sample_stride),
+        values,
+        static_cast<int>(length)
+    );
+    env->ReleaseFloatArrayElements(out_flow_atlas, values, ok ? 0 : JNI_ABORT);
+    if (!ok) {
+        set_wind_tunnel_last_error(wind_tunnel_solver_error("extract_wind_tunnel_flow_atlas"));
     }
     return ok ? JNI_TRUE : JNI_FALSE;
 }

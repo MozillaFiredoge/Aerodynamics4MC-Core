@@ -17,6 +17,14 @@ public final class AeroWindApi {
         return provider != MISSING_PROVIDER;
     }
 
+    public static AeroL2Result runL2(AeroL2Request request) {
+        return provider.runL2(request);
+    }
+
+    public static AeroPolarResult runPolar(AeroPolarRequest request) {
+        return provider.runPolar(request);
+    }
+
     public static AeroWindSample sample(A4mcWorldRef world, A4mcVec3 position) {
         return provider.sample(world, position, null);
     }

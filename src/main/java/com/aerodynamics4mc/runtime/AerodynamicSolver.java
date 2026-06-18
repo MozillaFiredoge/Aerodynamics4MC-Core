@@ -97,6 +97,19 @@ public final class AerodynamicSolver implements AutoCloseable {
         }
     }
 
+    public void setFlowState(float[] flowState) {
+        ensureOpen();
+        if (flowState == null || flowState.length != cells * NativeSimulationBridge.FLOW_STATE_CHANNELS) {
+            throw new IllegalArgumentException(
+                "flow state length must be " + (cells * NativeSimulationBridge.FLOW_STATE_CHANNELS)
+            );
+        }
+        float[] copy = Arrays.copyOf(flowState, flowState.length);
+        if (!bridge.setWindTunnelFlowState(handle, nx, ny, nz, copy)) {
+            throw new IllegalStateException("failed to upload flow state: " + bridge.windTunnelLastError());
+        }
+    }
+
     public void advance(int steps, float inletVx, float inletVy, float inletVz) {
         advance(
             steps,
@@ -149,6 +162,27 @@ public final class AerodynamicSolver implements AutoCloseable {
             );
         }
         return result;
+    }
+
+    public int flowAtlasValueCount(int sampleStride) {
+        if (sampleStride <= 0) {
+            throw new IllegalArgumentException("sample stride must be positive");
+        }
+        int atlasNx = (nx + sampleStride - 1) / sampleStride;
+        int atlasNy = (ny + sampleStride - 1) / sampleStride;
+        int atlasNz = (nz + sampleStride - 1) / sampleStride;
+        return atlasNx * atlasNy * atlasNz * NativeSimulationBridge.FLOW_STATE_CHANNELS;
+    }
+
+    public void extractFlowAtlas(int sampleStride, float[] outFlowAtlas) {
+        ensureOpen();
+        int expectedValues = flowAtlasValueCount(sampleStride);
+        if (outFlowAtlas == null || outFlowAtlas.length != expectedValues) {
+            throw new IllegalArgumentException("flow atlas length must be " + expectedValues);
+        }
+        if (!bridge.extractWindTunnelFlowAtlas(handle, nx, ny, nz, sampleStride, outFlowAtlas)) {
+            throw new IllegalStateException("failed to extract flow atlas: " + bridge.windTunnelLastError());
+        }
     }
 
     @Override

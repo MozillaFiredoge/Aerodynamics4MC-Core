@@ -10,6 +10,7 @@ import java.util.Map;
 
 final class MesoscaleGrid implements AutoCloseable {
     private static final float SURFACE_RELAXATION_PER_SECOND = 1.0f / 600.0f;
+    private static final float TWO_PI = (float) (Math.PI * 2.0);
     private static final float TERRAIN_WIND_DEFLECTION = 0.35f;
     private static final float TERRAIN_TEMPERATURE_OFFSET_K = 4.0f;
     private static final float AMBIENT_LAPSE_RATE_K_PER_BLOCK = 0.0065f;
@@ -28,6 +29,15 @@ final class MesoscaleGrid implements AutoCloseable {
     private static final float L1_TERRAIN_CONTOUR_DEFLECTION = 0.45f;
     private static final float L1_THERMAL_SLOPE_WIND_MPS = 1.10f;
     private static final float L1_THERMAL_SLOPE_REFERENCE = 0.08f;
+    private static final float L1_COAST_BREEZE_DAY_MPS = 2.40f;
+    private static final float L1_COAST_BREEZE_NIGHT_MPS = 0.90f;
+    private static final float L1_RIDGE_SPEEDUP_MPS = 1.35f;
+    private static final float L1_RIDGE_UPDRAFT_MPS = 1.20f;
+    private static final float L1_LEE_SHELTER_MAX = 0.55f;
+    private static final float L1_VALLEY_CHANNEL_BLEND = 0.62f;
+    private static final float L1_VALLEY_SPEEDUP_MPS = 0.90f;
+    private static final float L1_TERRAIN_PROMINENCE_REFERENCE_BLOCKS = 36.0f;
+    private static final float L1_VALLEY_WALL_REFERENCE_BLOCKS = 44.0f;
     private static final float DEFAULT_MOLECULAR_NU_M2_S = 1.5e-5f;
     private static final float DEFAULT_PRANDTL_AIR = 0.71f;
     private static final float DEFAULT_TURBULENT_PRANDTL = 0.85f;
@@ -434,6 +444,16 @@ final class MesoscaleGrid implements AutoCloseable {
         float[] ablStability = new float[stateCount];
         float[] ablMixingStrength = new float[stateCount];
         float[] ablProfileBlend = new float[stateCount];
+        float[] terrainCoastBreezeX = new float[stateCount];
+        float[] terrainCoastBreezeZ = new float[stateCount];
+        float[] terrainRidgeWindX = new float[stateCount];
+        float[] terrainRidgeWindZ = new float[stateCount];
+        float[] terrainValleyWindX = new float[stateCount];
+        float[] terrainValleyWindZ = new float[stateCount];
+        float[] terrainLeeShelter = new float[stateCount];
+        float[] terrainUpdraft = new float[stateCount];
+        float[] terrainTurbulence = new float[stateCount];
+        float[] terrainRoughnessDrag = new float[stateCount];
         float[] forcingNestedAmbientDeltaKelvin = new float[stateCount];
         float[] forcingNestedSurfaceDeltaKelvin = new float[stateCount];
         float[] forcingNestedWindXDelta = new float[stateCount];
@@ -501,6 +521,16 @@ final class MesoscaleGrid implements AutoCloseable {
                     ablStability[stateIndex] = cell.ablStability[layer];
                     ablMixingStrength[stateIndex] = cell.ablMixingStrength[layer];
                     ablProfileBlend[stateIndex] = cell.ablProfileBlend[layer];
+                    terrainCoastBreezeX[stateIndex] = cell.terrainCoastBreezeX[layer];
+                    terrainCoastBreezeZ[stateIndex] = cell.terrainCoastBreezeZ[layer];
+                    terrainRidgeWindX[stateIndex] = cell.terrainRidgeWindX[layer];
+                    terrainRidgeWindZ[stateIndex] = cell.terrainRidgeWindZ[layer];
+                    terrainValleyWindX[stateIndex] = cell.terrainValleyWindX[layer];
+                    terrainValleyWindZ[stateIndex] = cell.terrainValleyWindZ[layer];
+                    terrainLeeShelter[stateIndex] = cell.terrainLeeShelter[layer];
+                    terrainUpdraft[stateIndex] = cell.terrainUpdraft[layer];
+                    terrainTurbulence[stateIndex] = cell.terrainTurbulence[layer];
+                    terrainRoughnessDrag[stateIndex] = cell.terrainRoughnessDrag[layer];
                     forcingNestedAmbientDeltaKelvin[stateIndex] = forcingBase >= 0 && forcingBase + CH_NESTED_AMBIENT_DELTA < forcingBuffer.length
                         ? forcingBuffer[forcingBase + CH_NESTED_AMBIENT_DELTA]
                         : 0.0f;
@@ -614,6 +644,16 @@ final class MesoscaleGrid implements AutoCloseable {
             ablStability,
             ablMixingStrength,
             ablProfileBlend,
+            terrainCoastBreezeX,
+            terrainCoastBreezeZ,
+            terrainRidgeWindX,
+            terrainRidgeWindZ,
+            terrainValleyWindX,
+            terrainValleyWindZ,
+            terrainLeeShelter,
+            terrainUpdraft,
+            terrainTurbulence,
+            terrainRoughnessDrag,
             forcingNestedAmbientDeltaKelvin,
             forcingNestedSurfaceDeltaKelvin,
             forcingNestedWindXDelta,
@@ -897,6 +937,7 @@ final class MesoscaleGrid implements AutoCloseable {
             ? Math.min(MAX_L1_WIND_MPS, MAX_L1_LATTICE_WIND * transport.velocityScaleMetersPerSecond())
             : MAX_L1_WIND_MPS;
         Map<Long, Float> terrainHeightCache = new HashMap<>(cellCount + gridWidth * 4);
+        Map<Long, Byte> surfaceClassCache = new HashMap<>(cellCount + gridWidth * 4);
 
         for (int cx = centerCellX - radiusCells; cx <= centerCellX + radiusCells; cx++) {
             for (int cz = centerCellZ - radiusCells; cz <= centerCellZ + radiusCells; cz++) {
@@ -948,23 +989,24 @@ final class MesoscaleGrid implements AutoCloseable {
                 surfaceTargetWindZ = Mth.clamp(surfaceTargetWindZ, -maxBackgroundWind, maxBackgroundWind);
                 float surfaceAirDelta = (bg != null ? bg.surfaceTemperatureKelvin() : ambientAirTemperatureKelvin)
                     - ambientAirTemperatureKelvin;
-                WindVector terrainAdjustedSurfaceWind = terrainAdjustedSurfaceWind(
+                TerrainWindContribution terrainContribution = terrainWindContribution(
                     world,
                     provider,
                     cx,
                     cz,
                     terrainHeightCache,
+                    surfaceClassCache,
                     surfaceTargetWindX,
                     surfaceTargetWindZ,
                     surfaceAirDelta
                 );
                 surfaceTargetWindX = Mth.clamp(
-                    terrainAdjustedSurfaceWind.x(),
+                    terrainContribution.finalWindX(),
                     -maxBackgroundWind,
                     maxBackgroundWind
                 );
                 surfaceTargetWindZ = Mth.clamp(
-                    terrainAdjustedSurfaceWind.z(),
+                    terrainContribution.finalWindZ(),
                     -maxBackgroundWind,
                     maxBackgroundWind
                 );
@@ -1053,6 +1095,19 @@ final class MesoscaleGrid implements AutoCloseable {
                     float layerSurfaceWindZ = surfaceTargetWindZ * (1.0f - roughnessDrag);
                     float layerWindX = Mth.lerp(profileBlend, layerSurfaceWindX, aloftTargetWindX);
                     float layerWindZ = Mth.lerp(profileBlend, layerSurfaceWindZ, aloftTargetWindZ);
+                    float terrainCauseWeight = terrainSolid ? 0.0f : 1.0f - profileBlend;
+                    cell.terrainCoastBreezeX[layer] = terrainContribution.coastBreezeX() * terrainCauseWeight;
+                    cell.terrainCoastBreezeZ[layer] = terrainContribution.coastBreezeZ() * terrainCauseWeight;
+                    cell.terrainRidgeWindX[layer] = terrainContribution.ridgeSpeedupX() * terrainCauseWeight;
+                    cell.terrainRidgeWindZ[layer] = terrainContribution.ridgeSpeedupZ() * terrainCauseWeight;
+                    cell.terrainValleyWindX[layer] = terrainContribution.valleyChannelX() * terrainCauseWeight;
+                    cell.terrainValleyWindZ[layer] = terrainContribution.valleyChannelZ() * terrainCauseWeight;
+                    cell.terrainLeeShelter[layer] = terrainContribution.leeShelter() * terrainCauseWeight;
+                    cell.terrainTurbulence[layer] = terrainContribution.turbulence() * terrainCauseWeight;
+                    cell.terrainRoughnessDrag[layer] = roughnessDrag;
+                    cell.terrainUpdraft[layer] = terrainContribution.updraftMps()
+                        * terrainCauseWeight
+                        * (float) Math.exp(-aboveGround / Math.max(16.0f, layerHeightBlocks * 2.0f));
                     layerWindX = Mth.clamp(layerWindX, -maxBackgroundWind, maxBackgroundWind);
                     layerWindZ = Mth.clamp(layerWindZ, -maxBackgroundWind, maxBackgroundWind);
                     WindVector cappedLayerWind = clampWindMagnitude(layerWindX, layerWindZ, MAX_L1_WIND_MPS);
@@ -1155,16 +1210,18 @@ final class MesoscaleGrid implements AutoCloseable {
         cell.staticInitialized = true;
     }
 
-    private WindVector terrainAdjustedSurfaceWind(
+    private TerrainWindContribution terrainWindContribution(
         ServerLevel world,
         SeedTerrainProvider provider,
         int cellX,
         int cellZ,
         Map<Long, Float> terrainHeightCache,
+        Map<Long, Byte> surfaceClassCache,
         float windX,
         float windZ,
         float surfaceAirDelta
     ) {
+        float current = terrainHeightAtCell(world, provider, cellX, cellZ, terrainHeightCache);
         float west = terrainHeightAtCell(world, provider, cellX - 1, cellZ, terrainHeightCache);
         float east = terrainHeightAtCell(world, provider, cellX + 1, cellZ, terrainHeightCache);
         float north = terrainHeightAtCell(world, provider, cellX, cellZ - 1, terrainHeightCache);
@@ -1173,68 +1230,169 @@ final class MesoscaleGrid implements AutoCloseable {
         float slopeX = (east - west) / horizontalSpan;
         float slopeZ = (south - north) / horizontalSpan;
         float slopeMagnitude = windSpeed(slopeX, slopeZ);
-        if (slopeMagnitude <= 1.0e-4f) {
-            return new WindVector(windX, windZ);
-        }
 
         float adjustedX = finiteOrDefault(windX, 0.0f);
         float adjustedZ = finiteOrDefault(windZ, 0.0f);
         float windMagnitude = windSpeed(adjustedX, adjustedZ);
-        float slopeWeight = Mth.clamp(slopeMagnitude / L1_TERRAIN_SLOPE_REFERENCE, 0.0f, 1.0f);
-        float slopeUnitX = slopeX / slopeMagnitude;
-        float slopeUnitZ = slopeZ / slopeMagnitude;
+        float coastBreezeX = 0.0f;
+        float coastBreezeZ = 0.0f;
+        float ridgeSpeedupX = 0.0f;
+        float ridgeSpeedupZ = 0.0f;
+        float valleyChannelX = 0.0f;
+        float valleyChannelZ = 0.0f;
+        float updraftMps = 0.0f;
+        float leeShelter = 0.0f;
+        float turbulence = 0.0f;
 
-        if (windMagnitude > 1.0e-3f) {
-            float windUnitX = adjustedX / windMagnitude;
-            float windUnitZ = adjustedZ / windMagnitude;
-            float alongSlope = windUnitX * slopeUnitX + windUnitZ * slopeUnitZ;
-            float uphillDrag = Mth.clamp(
-                Math.max(0.0f, alongSlope) * slopeWeight * L1_TERRAIN_FORM_DRAG,
-                0.0f,
-                0.65f
-            );
-            adjustedX *= 1.0f - uphillDrag;
-            adjustedZ *= 1.0f - uphillDrag;
-
-            float contourX = -slopeUnitZ;
-            float contourZ = slopeUnitX;
-            if (adjustedX * contourX + adjustedZ * contourZ < 0.0f) {
-                contourX = -contourX;
-                contourZ = -contourZ;
-            }
-            float contourPush = Math.abs(alongSlope)
-                * slopeWeight
-                * L1_TERRAIN_CONTOUR_DEFLECTION
-                * windMagnitude;
-            adjustedX += contourX * contourPush;
-            adjustedZ += contourZ * contourPush;
-        }
-
-        float thermalSlopeWeight = Mth.clamp(
-            slopeMagnitude / L1_THERMAL_SLOPE_REFERENCE,
-            0.0f,
-            1.0f
-        );
-        float thermalWeight = Mth.clamp(
-            Math.abs(surfaceAirDelta) / ABL_STABILITY_DELTA_K,
-            0.0f,
-            1.0f
-        ) * thermalSlopeWeight;
-        if (thermalWeight > 1.0e-3f) {
-            float thermalSign = surfaceAirDelta >= 0.0f ? 1.0f : -1.0f;
-            float thermalSpeed = L1_THERMAL_SLOPE_WIND_MPS * thermalWeight;
-            adjustedX += slopeUnitX * thermalSign * thermalSpeed;
-            adjustedZ += slopeUnitZ * thermalSign * thermalSpeed;
+        float waterWest = waterPresenceAtCell(world, provider, cellX - 1, cellZ, surfaceClassCache);
+        float waterEast = waterPresenceAtCell(world, provider, cellX + 1, cellZ, surfaceClassCache);
+        float waterNorth = waterPresenceAtCell(world, provider, cellX, cellZ - 1, surfaceClassCache);
+        float waterSouth = waterPresenceAtCell(world, provider, cellX, cellZ + 1, surfaceClassCache);
+        float waterGradientX = (waterEast - waterWest) * 0.5f;
+        float waterGradientZ = (waterSouth - waterNorth) * 0.5f;
+        float waterGradientMagnitude = windSpeed(waterGradientX, waterGradientZ);
+        if (waterGradientMagnitude > 1.0e-4f) {
+            float landwardX = -waterGradientX / waterGradientMagnitude;
+            float landwardZ = -waterGradientZ / waterGradientMagnitude;
+            float coastWeight = Mth.clamp(waterGradientMagnitude * 1.65f, 0.0f, 1.0f);
+            float dayBreeze = daytimeHeatingFactor(world);
+            float nightBreeze = nighttimeCoolingFactor(world);
+            float weatherDamping = coastalWeatherDamping(world);
+            float coastSpeed = (L1_COAST_BREEZE_DAY_MPS * dayBreeze
+                - L1_COAST_BREEZE_NIGHT_MPS * nightBreeze)
+                * coastWeight
+                * weatherDamping;
+            coastBreezeX = landwardX * coastSpeed;
+            coastBreezeZ = landwardZ * coastSpeed;
+            adjustedX += coastBreezeX;
+            adjustedZ += coastBreezeZ;
         }
 
         float adjustedMagnitude = windSpeed(adjustedX, adjustedZ);
-        float maxAdjustedMagnitude = Math.max(windMagnitude + L1_THERMAL_SLOPE_WIND_MPS, windMagnitude * 1.35f + 0.50f);
-        if (adjustedMagnitude > maxAdjustedMagnitude && adjustedMagnitude > 1.0e-3f) {
-            float scale = maxAdjustedMagnitude / adjustedMagnitude;
+        if (adjustedMagnitude > 1.0e-3f) {
+            float windUnitX = adjustedX / adjustedMagnitude;
+            float windUnitZ = adjustedZ / adjustedMagnitude;
+            if (slopeMagnitude > 1.0e-4f) {
+                float slopeWeight = Mth.clamp(slopeMagnitude / L1_TERRAIN_SLOPE_REFERENCE, 0.0f, 1.0f);
+                float slopeUnitX = slopeX / slopeMagnitude;
+                float slopeUnitZ = slopeZ / slopeMagnitude;
+                float alongSlope = windUnitX * slopeUnitX + windUnitZ * slopeUnitZ;
+                float windwardLift = Math.max(0.0f, alongSlope) * slopeWeight;
+                float uphillDrag = Mth.clamp(
+                    windwardLift * L1_TERRAIN_FORM_DRAG * 0.58f,
+                    0.0f,
+                    0.42f
+                );
+                adjustedX *= 1.0f - uphillDrag;
+                adjustedZ *= 1.0f - uphillDrag;
+                updraftMps += L1_RIDGE_UPDRAFT_MPS * windwardLift;
+
+                float contourX = -slopeUnitZ;
+                float contourZ = slopeUnitX;
+                if (adjustedX * contourX + adjustedZ * contourZ < 0.0f) {
+                    contourX = -contourX;
+                    contourZ = -contourZ;
+                }
+                float contourPush = Math.abs(alongSlope)
+                    * slopeWeight
+                    * L1_TERRAIN_CONTOUR_DEFLECTION
+                    * adjustedMagnitude;
+                adjustedX += contourX * contourPush;
+                adjustedZ += contourZ * contourPush;
+
+                float leeWeight = Math.max(0.0f, -alongSlope) * slopeWeight;
+                leeShelter = Mth.clamp(leeWeight * L1_LEE_SHELTER_MAX, 0.0f, L1_LEE_SHELTER_MAX);
+                adjustedX *= 1.0f - leeShelter;
+                adjustedZ *= 1.0f - leeShelter;
+                turbulence += leeWeight * 0.65f;
+
+                float thermalSlopeWeight = Mth.clamp(
+                    slopeMagnitude / L1_THERMAL_SLOPE_REFERENCE,
+                    0.0f,
+                    1.0f
+                );
+                float thermalWeight = Mth.clamp(
+                    Math.abs(surfaceAirDelta) / ABL_STABILITY_DELTA_K,
+                    0.0f,
+                    1.0f
+                ) * thermalSlopeWeight;
+                if (thermalWeight > 1.0e-3f) {
+                    float thermalSign = surfaceAirDelta >= 0.0f ? 1.0f : -1.0f;
+                    float thermalSpeed = L1_THERMAL_SLOPE_WIND_MPS * thermalWeight;
+                    adjustedX += slopeUnitX * thermalSign * thermalSpeed;
+                    adjustedZ += slopeUnitZ * thermalSign * thermalSpeed;
+                    updraftMps += Math.max(0.0f, thermalSign) * thermalSpeed * 0.35f;
+                }
+            }
+
+            float averageNeighborHeight = (west + east + north + south) * 0.25f;
+            float ridgeProminence = Math.max(0.0f, current - averageNeighborHeight);
+            float ridgeWeight = Mth.clamp(
+                ridgeProminence / L1_TERRAIN_PROMINENCE_REFERENCE_BLOCKS,
+                0.0f,
+                1.0f
+            );
+            if (ridgeWeight > 1.0e-3f) {
+                float windSpeedWeight = Mth.clamp(adjustedMagnitude / 4.0f, 0.0f, 1.0f);
+                float ridgeSpeedup = L1_RIDGE_SPEEDUP_MPS * ridgeWeight * (0.35f + 0.65f * windSpeedWeight);
+                ridgeSpeedupX = windUnitX * ridgeSpeedup;
+                ridgeSpeedupZ = windUnitZ * ridgeSpeedup;
+                adjustedX += ridgeSpeedupX;
+                adjustedZ += ridgeSpeedupZ;
+                updraftMps += L1_RIDGE_UPDRAFT_MPS * ridgeWeight * windSpeedWeight * 0.70f;
+                turbulence += ridgeWeight * 0.25f;
+            }
+
+            float eastWestWalls = Math.min(Math.max(0.0f, east - current), Math.max(0.0f, west - current));
+            float northSouthWalls = Math.min(Math.max(0.0f, north - current), Math.max(0.0f, south - current));
+            float valleyWallHeight = Math.max(eastWestWalls, northSouthWalls);
+            float valleyContrast = Math.abs(eastWestWalls - northSouthWalls);
+            float valleyWeight = Mth.clamp(
+                (valleyWallHeight - 8.0f) / L1_VALLEY_WALL_REFERENCE_BLOCKS,
+                0.0f,
+                1.0f
+            ) * Mth.clamp(valleyContrast / L1_VALLEY_WALL_REFERENCE_BLOCKS, 0.0f, 1.0f);
+            if (valleyWeight > 1.0e-3f) {
+                float axisX = northSouthWalls > eastWestWalls ? 1.0f : 0.0f;
+                float axisZ = eastWestWalls >= northSouthWalls ? 1.0f : 0.0f;
+                float axisSign = adjustedX * axisX + adjustedZ * axisZ >= 0.0f ? 1.0f : -1.0f;
+                axisX *= axisSign;
+                axisZ *= axisSign;
+                float targetSpeed = windSpeed(adjustedX, adjustedZ) + L1_VALLEY_SPEEDUP_MPS * valleyWeight;
+                float targetX = axisX * targetSpeed;
+                float targetZ = axisZ * targetSpeed;
+                float blend = valleyWeight * L1_VALLEY_CHANNEL_BLEND;
+                valleyChannelX = (targetX - adjustedX) * blend;
+                valleyChannelZ = (targetZ - adjustedZ) * blend;
+                adjustedX += valleyChannelX;
+                adjustedZ += valleyChannelZ;
+                turbulence += valleyWeight * 0.18f;
+            }
+        }
+
+        float finalMagnitude = windSpeed(adjustedX, adjustedZ);
+        float maxAdjustedMagnitude = Math.max(
+            windMagnitude + L1_THERMAL_SLOPE_WIND_MPS + L1_COAST_BREEZE_DAY_MPS + L1_RIDGE_SPEEDUP_MPS,
+            windMagnitude * 1.60f + 1.25f
+        );
+        if (finalMagnitude > maxAdjustedMagnitude && finalMagnitude > 1.0e-3f) {
+            float scale = maxAdjustedMagnitude / finalMagnitude;
             adjustedX *= scale;
             adjustedZ *= scale;
         }
-        return new WindVector(adjustedX, adjustedZ);
+        return new TerrainWindContribution(
+            adjustedX,
+            adjustedZ,
+            coastBreezeX,
+            coastBreezeZ,
+            ridgeSpeedupX,
+            ridgeSpeedupZ,
+            valleyChannelX,
+            valleyChannelZ,
+            updraftMps,
+            leeShelter,
+            Mth.clamp(turbulence, 0.0f, 1.0f)
+        );
     }
 
     private float terrainHeightAtCell(
@@ -1267,6 +1425,70 @@ final class MesoscaleGrid implements AutoCloseable {
         float height = finiteOrDefault(terrain.terrainHeightBlocks(), world.getSeaLevel());
         terrainHeightCache.put(key, height);
         return height;
+    }
+
+    private float waterPresenceAtCell(
+        ServerLevel world,
+        SeedTerrainProvider provider,
+        int cellX,
+        int cellZ,
+        Map<Long, Byte> surfaceClassCache
+    ) {
+        return surfaceClassAtCell(world, provider, cellX, cellZ, surfaceClassCache)
+            == HashedSeedTerrainProvider.SURFACE_CLASS_WATER
+            ? 1.0f
+            : 0.0f;
+    }
+
+    private byte surfaceClassAtCell(
+        ServerLevel world,
+        SeedTerrainProvider provider,
+        int cellX,
+        int cellZ,
+        Map<Long, Byte> surfaceClassCache
+    ) {
+        long key = pack(cellX, cellZ);
+        Byte cachedClass = surfaceClassCache.get(key);
+        if (cachedClass != null) {
+            return cachedClass;
+        }
+        CellColumnState cell = cells.get(key);
+        if (cell != null && cell.staticInitialized) {
+            surfaceClassCache.put(key, cell.surfaceClass);
+            return cell.surfaceClass;
+        }
+        if (provider == null) {
+            surfaceClassCache.put(key, HashedSeedTerrainProvider.SURFACE_CLASS_PLAINS);
+            return HashedSeedTerrainProvider.SURFACE_CLASS_PLAINS;
+        }
+        SeedTerrainProvider.TerrainSample terrain = provider.sample(
+            world,
+            cellCenterBlock(cellX),
+            cellCenterBlock(cellZ)
+        );
+        byte surfaceClass = terrain.surfaceClass();
+        surfaceClassCache.put(key, surfaceClass);
+        return surfaceClass;
+    }
+
+    private float daytimeHeatingFactor(ServerLevel world) {
+        long dayTime = Math.floorMod(world.getDayTime(), 24000L);
+        float angle = ((dayTime - 6000.0f) / 24000.0f) * TWO_PI;
+        float sun = Mth.cos(angle);
+        return Mth.clamp((sun + 0.10f) / 1.10f, 0.0f, 1.0f);
+    }
+
+    private float nighttimeCoolingFactor(ServerLevel world) {
+        long dayTime = Math.floorMod(world.getDayTime(), 24000L);
+        float angle = ((dayTime - 6000.0f) / 24000.0f) * TWO_PI;
+        float sun = Mth.cos(angle);
+        return Mth.clamp((-sun - 0.20f) / 0.80f, 0.0f, 1.0f);
+    }
+
+    private float coastalWeatherDamping(ServerLevel world) {
+        float rain = world.getRainLevel(1.0f);
+        float thunder = world.getThunderLevel(1.0f);
+        return Mth.clamp(1.0f - rain * 0.45f - thunder * 0.25f, 0.35f, 1.0f);
     }
 
     private boolean stepNative(float deltaSeconds) {
@@ -1341,7 +1563,7 @@ final class MesoscaleGrid implements AutoCloseable {
                         : finiteOrDefault(
                             stateBuffer[stateBase + OUT_WIND_Y],
                             cell.windY[layer]
-                        );
+                        ) + cell.terrainUpdraft[layer];
                     cell.windZ[layer] = terrainSolid
                         ? 0.0f
                         : finiteOrDefault(
@@ -1373,7 +1595,9 @@ final class MesoscaleGrid implements AutoCloseable {
                     float ambientTarget = forcingBuffer[base + CH_AMBIENT_TARGET] + forcingBuffer[base + CH_NESTED_AMBIENT_DELTA];
                     float surfaceTarget = forcingBuffer[base + CH_SURFACE_TARGET] + forcingBuffer[base + CH_NESTED_SURFACE_DELTA];
                     float windTargetX = forcingBuffer[base + CH_BACKGROUND_WIND_X] + forcingBuffer[base + CH_NESTED_WIND_X_DELTA];
-                    float windTargetY = forcingBuffer[base + CH_NESTED_UPDRAFT] + forcingBuffer[base + CH_TORNADO_UPDRAFT];
+                    float windTargetY = forcingBuffer[base + CH_NESTED_UPDRAFT]
+                        + forcingBuffer[base + CH_TORNADO_UPDRAFT]
+                        + cell.terrainUpdraft[layer];
                     float windTargetZ = forcingBuffer[base + CH_BACKGROUND_WIND_Z] + forcingBuffer[base + CH_NESTED_WIND_Z_DELTA];
                     boolean terrainSolid = forcingBuffer[base + CH_SOLID_MASK] > 0.5f;
                     cell.ambientAirTemperatureKelvin[layer] = relax(
@@ -1972,6 +2196,21 @@ final class MesoscaleGrid implements AutoCloseable {
     private record WindVector(float x, float z) {
     }
 
+    private record TerrainWindContribution(
+        float finalWindX,
+        float finalWindZ,
+        float coastBreezeX,
+        float coastBreezeZ,
+        float ridgeSpeedupX,
+        float ridgeSpeedupZ,
+        float valleyChannelX,
+        float valleyChannelZ,
+        float updraftMps,
+        float leeShelter,
+        float turbulence
+    ) {
+    }
+
     private int unpackX(long packed) {
         return (int) (packed >> 32);
     }
@@ -2228,6 +2467,16 @@ final class MesoscaleGrid implements AutoCloseable {
         float[] ablStability,
         float[] ablMixingStrength,
         float[] ablProfileBlend,
+        float[] terrainCoastBreezeX,
+        float[] terrainCoastBreezeZ,
+        float[] terrainRidgeWindX,
+        float[] terrainRidgeWindZ,
+        float[] terrainValleyWindX,
+        float[] terrainValleyWindZ,
+        float[] terrainLeeShelter,
+        float[] terrainUpdraft,
+        float[] terrainTurbulence,
+        float[] terrainRoughnessDrag,
         float[] forcingNestedAmbientDeltaKelvin,
         float[] forcingNestedSurfaceDeltaKelvin,
         float[] forcingNestedWindXDelta,
@@ -2336,6 +2585,16 @@ final class MesoscaleGrid implements AutoCloseable {
         private float[] ablStability;
         private float[] ablMixingStrength;
         private float[] ablProfileBlend;
+        private float[] terrainCoastBreezeX;
+        private float[] terrainCoastBreezeZ;
+        private float[] terrainRidgeWindX;
+        private float[] terrainRidgeWindZ;
+        private float[] terrainValleyWindX;
+        private float[] terrainValleyWindZ;
+        private float[] terrainLeeShelter;
+        private float[] terrainUpdraft;
+        private float[] terrainTurbulence;
+        private float[] terrainRoughnessDrag;
         private float[] humidity;
 
         private CellColumnState(int layers) {
@@ -2361,6 +2620,16 @@ final class MesoscaleGrid implements AutoCloseable {
                 ablStability = new float[layers];
                 ablMixingStrength = new float[layers];
                 ablProfileBlend = new float[layers];
+                terrainCoastBreezeX = new float[layers];
+                terrainCoastBreezeZ = new float[layers];
+                terrainRidgeWindX = new float[layers];
+                terrainRidgeWindZ = new float[layers];
+                terrainValleyWindX = new float[layers];
+                terrainValleyWindZ = new float[layers];
+                terrainLeeShelter = new float[layers];
+                terrainUpdraft = new float[layers];
+                terrainTurbulence = new float[layers];
+                terrainRoughnessDrag = new float[layers];
                 humidity = new float[layers];
             }
         }

@@ -3,6 +3,10 @@ package com.aerodynamics4mc.api.client;
 import com.aerodynamics4mc.api.A4mcBlockPos;
 import com.aerodynamics4mc.api.A4mcVec3;
 import com.aerodynamics4mc.api.A4mcWorldRef;
+import com.aerodynamics4mc.api.AeroL2Request;
+import com.aerodynamics4mc.api.AeroL2Result;
+import com.aerodynamics4mc.api.AeroPolarRequest;
+import com.aerodynamics4mc.api.AeroPolarResult;
 import com.aerodynamics4mc.api.AeroWindSample;
 import com.aerodynamics4mc.api.SamplePolicy;
 
@@ -21,6 +25,14 @@ public final class AeroClientWindApi {
 
     public static boolean isAvailable() {
         return provider != MISSING_PROVIDER;
+    }
+
+    public static AeroL2Result runL2(AeroL2Request request) {
+        return provider.runL2(request);
+    }
+
+    public static AeroPolarResult runPolar(AeroPolarRequest request) {
+        return provider.runPolar(request);
     }
 
     public static AeroWindSample sample(A4mcWorldRef world, A4mcVec3 position) {

@@ -1,0 +1,19 @@
+{
+  "variants": {
+    "facing=north": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing"
+    },
+    "facing=east": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing",
+      "y": 90
+    },
+    "facing=south": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing",
+      "y": 180
+    },
+    "facing=west": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing",
+      "y": 270
+    }
+  }
+}

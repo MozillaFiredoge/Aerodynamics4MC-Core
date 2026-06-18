@@ -6,6 +6,10 @@ import com.aerodynamics4mc.api.A4mcId;
 import com.aerodynamics4mc.api.A4mcPlayerRef;
 import com.aerodynamics4mc.api.A4mcVec3;
 import com.aerodynamics4mc.api.A4mcWorldRef;
+import com.aerodynamics4mc.api.AeroL2Request;
+import com.aerodynamics4mc.api.AeroL2Result;
+import com.aerodynamics4mc.api.AeroPolarRequest;
+import com.aerodynamics4mc.api.AeroPolarResult;
 import com.aerodynamics4mc.api.AeroWindApi;
 import com.aerodynamics4mc.api.AeroWindRuntimeProvider;
 import com.aerodynamics4mc.api.AeroWindSample;
@@ -413,6 +417,16 @@ public final class AeroServerRuntime {
 	}
 
 	private static final class RuntimeProvider implements AeroWindRuntimeProvider {
+		@Override
+		public AeroL2Result runL2(AeroL2Request request) {
+			return AeroL2WindTunnel.run(request);
+		}
+
+		@Override
+		public AeroPolarResult runPolar(AeroPolarRequest request) {
+			return AeroPolarGenerator.run(request);
+		}
+
 		@Override
 		public AeroWindSample sample(A4mcWorldRef world, A4mcVec3 position, SamplePolicy policy) {
 			return policy == null ? sampleFlow(world, position) : sampleFlow(world, position, policy);

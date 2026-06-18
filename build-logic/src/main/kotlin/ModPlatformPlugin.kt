@@ -5,6 +5,7 @@ import dev.kikugie.stonecutter.StonecutterExperimentalAPI
 import dev.kikugie.stonecutter.build.StonecutterBuildExtension
 import net.fabricmc.loom.task.RemapJarTask
 import org.gradle.api.DefaultTask
+import org.gradle.api.artifacts.ExternalModuleDependency
 import org.gradle.api.GradleException
 import org.gradle.api.Plugin
 import org.gradle.api.Project
@@ -136,6 +137,10 @@ abstract class ModPlatformPlugin @Inject constructor() : Plugin<Project> {
 		bundleSourceSetIntoMainJar(clientSourceSet, mainSourceSet)
 		val contentClientSourceSet = configureFeatureSourceSet("contentClient", mainSourceSet, contentSourceSet, clientSourceSet)
 		configureContentAddonJar(ctx, contentSourceSet, contentClientSourceSet)
+		if (ctx.loader == Loader.NeoForge) {
+			val createAeronauticsCompatSourceSet = configureFeatureSourceSet("compatCreateAeronautics", mainSourceSet)
+			configureCreateAeronauticsCompatJar(ctx, createAeronauticsCompatSourceSet)
+		}
 	}
 
 	private fun Project.configureFeatureSourceSet(
@@ -244,6 +249,52 @@ abstract class ModPlatformPlugin @Inject constructor() : Plugin<Project> {
 
 		tasks.named("assemble") {
 			dependsOn(finalContentJar, contentSourcesJar)
+		}
+	}
+
+	private fun Project.configureCreateAeronauticsCompatJar(
+		ctx: Context,
+		compatSourceSet: SourceSet
+	) {
+		if (ctx.loader != Loader.NeoForge) {
+			return
+		}
+		(dependencies.add(
+			compatSourceSet.compileOnlyConfigurationName,
+			"dev.ryanhcode.sable:sable-neoforge-1.21.1:2.0.0"
+		) as ExternalModuleDependency).isTransitive = false
+		(dependencies.add(
+			compatSourceSet.compileOnlyConfigurationName,
+			"dev.ryanhcode.sable-companion:sable-companion-common-1.21.1:1.6.0"
+		) as ExternalModuleDependency).isTransitive = false
+		val compatManifestDir = layout.buildDirectory.dir("generated/createAeronauticsCompatModManifest")
+		val compatManifestTask = tasks.register<GenerateModManifestTask>("generateCreateAeronauticsCompatModManifest") {
+			content.set(ctx.loader.generateCreateAeronauticsCompatManifest(ctx))
+			outputFile.set(layout.buildDirectory.file("generated/createAeronauticsCompatModManifest/${ctx.loader.modManifestPath}"))
+		}
+
+		val compatJar = tasks.register<Jar>("createAeronauticsCompatJar") {
+			group = "build"
+			description = "Builds the Create Aeronautics compatibility addon jar."
+			archiveBaseName.set("${ctx.modId}-compat-create-aeronautics")
+			dependsOn(compatManifestTask, tasks.named(compatSourceSet.classesTaskName))
+			from(compatSourceSet.output)
+			from(compatManifestDir)
+			from(rootProject.file("src/main/resources/assets/icon.png")) {
+				into("assets")
+			}
+		}
+
+		val compatSourcesJar = tasks.register<Jar>("createAeronauticsCompatSourcesJar") {
+			group = "build"
+			description = "Builds the Create Aeronautics compatibility addon sources jar."
+			archiveBaseName.set("${ctx.modId}-compat-create-aeronautics")
+			archiveClassifier.set("sources")
+			from(compatSourceSet.allSource)
+		}
+
+		tasks.named("assemble") {
+			dependsOn(compatJar, compatSourcesJar)
 		}
 	}
 
@@ -473,14 +524,19 @@ abstract class ModPlatformPlugin @Inject constructor() : Plugin<Project> {
 
 	private fun Project.registerBuildAndCollectTask(ctx: Context) {
 		val contentJarTask = if (ctx.loader.isFabricLike) "remapContentJar" else "contentJar"
+		val collectedArtifacts = mutableListOf<Any>(
+			tasks.named(ctx.extension.jarTask.get()),
+			tasks.named(ctx.extension.sourcesJarTask.get()),
+			tasks.named("javadocJar"),
+			tasks.named(contentJarTask),
+			tasks.named("contentSourcesJar")
+		)
+		if (ctx.loader == Loader.NeoForge) {
+			collectedArtifacts += tasks.named("createAeronauticsCompatJar")
+			collectedArtifacts += tasks.named("createAeronauticsCompatSourcesJar")
+		}
 		tasks.register<Copy>("buildAndCollect") {
-			from(
-				tasks.named(ctx.extension.jarTask.get()),
-				tasks.named(ctx.extension.sourcesJarTask.get()),
-				tasks.named("javadocJar"),
-				tasks.named(contentJarTask),
-				tasks.named("contentSourcesJar")
-			)
+			from(collectedArtifacts)
 			into(rootProject.layout.buildDirectory.file("libs/${ctx.basicVersion}"))
 			dependsOn("build")
 		}

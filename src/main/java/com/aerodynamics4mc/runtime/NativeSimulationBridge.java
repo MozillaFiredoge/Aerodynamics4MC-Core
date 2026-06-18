@@ -1217,6 +1217,16 @@ public final class NativeSimulationBridge {
             && nativeSetWindTunnelSolidMask(solverHandle, solidMask);
     }
 
+    public boolean setWindTunnelFlowState(long solverHandle, int nx, int ny, int nz, float[] flowState) {
+        int cells = checkedCellCount(nx, ny, nz);
+        return LOADED
+            && solverHandle != 0L
+            && flowState != null
+            && cells > 0
+            && flowState.length == cells * FLOW_STATE_CHANNELS
+            && nativeSetWindTunnelFlowState(solverHandle, flowState);
+    }
+
     public boolean advanceWindTunnel(
         long solverHandle,
         int steps,
@@ -1235,6 +1245,30 @@ public final class NativeSimulationBridge {
             && Float.isFinite(density) && density > 0.0f
             && Float.isFinite(viscosity) && viscosity > 0.0f
             && nativeAdvanceWindTunnel(solverHandle, steps, inletVx, inletVy, inletVz, density, viscosity);
+    }
+
+    public boolean extractWindTunnelFlowAtlas(
+        long solverHandle,
+        int nx,
+        int ny,
+        int nz,
+        int sampleStride,
+        float[] outFlowAtlas
+    ) {
+        if (!LOADED
+            || solverHandle == 0L
+            || sampleStride <= 0
+            || outFlowAtlas == null
+            || checkedCellCount(nx, ny, nz) <= 0) {
+            return false;
+        }
+        int atlasNx = (nx + sampleStride - 1) / sampleStride;
+        int atlasNy = (ny + sampleStride - 1) / sampleStride;
+        int atlasNz = (nz + sampleStride - 1) / sampleStride;
+        int atlasCells = checkedCellCount(atlasNx, atlasNy, atlasNz);
+        return atlasCells > 0
+            && outFlowAtlas.length == atlasCells * FLOW_STATE_CHANNELS
+            && nativeExtractWindTunnelFlowAtlas(solverHandle, sampleStride, outFlowAtlas);
     }
 
     public WindTunnelForceMoment computeWindTunnelForceMoment(
@@ -1768,6 +1802,8 @@ public final class NativeSimulationBridge {
 
     private static native boolean nativeSetWindTunnelSolidMask(long solverHandle, byte[] solidMask);
 
+    private static native boolean nativeSetWindTunnelFlowState(long solverHandle, float[] flowState);
+
     private static native boolean nativeAdvanceWindTunnel(
         long solverHandle,
         int steps,
@@ -1776,6 +1812,12 @@ public final class NativeSimulationBridge {
         float inletVz,
         float density,
         float viscosity
+    );
+
+    private static native boolean nativeExtractWindTunnelFlowAtlas(
+        long solverHandle,
+        int sampleStride,
+        float[] outFlowAtlas
     );
 
     private static native boolean nativeComputeWindTunnelForceMoment(

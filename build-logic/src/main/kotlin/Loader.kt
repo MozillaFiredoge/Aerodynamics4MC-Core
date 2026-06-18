@@ -22,6 +22,7 @@ sealed class Loader(val id: String) {
 
 	abstract fun generateManifest(ctx: Context): String
 	abstract fun generateContentManifest(ctx: Context): String
+	abstract fun generateCreateAeronauticsCompatManifest(ctx: Context): String
 
 	sealed class FabricLike(id: String) : Loader(id) {
 		override val isFabricLike = true
@@ -84,6 +85,32 @@ sealed class Loader(val id: String) {
 				entrypoints = mapOf(
 					"client" to listOf("${ctx.modGroup}.${ctx.modId}.officialcontent.platform.fabric.FabricContentClientEntrypoint")
 				),
+				depends = requiredDependencies,
+				recommends = ctx.extension.dependencies.optional.associate { it.modid.get() to it.fabricLikeVersionRange.get() },
+				breaks = ctx.extension.dependencies.incompatible.associate { it.modid.get() to it.fabricLikeVersionRange.get() })
+			return JSON.encodeToString(manifest)
+		}
+
+		override fun generateCreateAeronauticsCompatManifest(ctx: Context): String {
+			val requiredDependencies = ctx.extension.dependencies.required
+				.associate { it.modid.get() to it.fabricLikeVersionRange.get() }
+				.toMutableMap()
+			requiredDependencies[ctx.modId] = ">=${ctx.baseVersion}"
+
+			val manifest = FabricContentManifest(
+				id = createAeronauticsCompatModId(ctx),
+				name = "${ctx.modName} Create Aeronautics Compat",
+				version = ctx.baseVersion,
+				authors = ctx.authors,
+				contributors = ctx.contributors,
+				contact = mapOf(
+					"sources" to ctx.sourcesUrl, "issues" to ctx.issuesUrl, "homepage" to ctx.homepageUrl
+				),
+				custom = buildJsonObject {},
+				description = "Create Aeronautics compatibility layer for ${ctx.modName}.",
+				icon = "assets/icon.png",
+				license = ctx.licenseName,
+				entrypoints = emptyMap(),
 				depends = requiredDependencies,
 				recommends = ctx.extension.dependencies.optional.associate { it.modid.get() to it.fabricLikeVersionRange.get() },
 				breaks = ctx.extension.dependencies.incompatible.associate { it.modid.get() to it.fabricLikeVersionRange.get() })
@@ -197,6 +224,49 @@ sealed class Loader(val id: String) {
 
 			return TOML.encodeToString(manifest)
 		}
+
+		override fun generateCreateAeronauticsCompatManifest(ctx: Context): String {
+			val addonModId = createAeronauticsCompatModId(ctx)
+			val forgeDeps = mutableListOf<ForgeDependency>()
+
+			fun required(modId: String, versionRange: String) {
+				forgeDeps.add(
+					ForgeDependency(
+						modId = modId,
+						side = "BOTH",
+						versionRange = versionRange,
+						mandatory = true,
+						type = "required"
+					)
+				)
+			}
+
+			required("minecraft", ctx.currentMcVersion)
+			required(ctx.loader.id, "[1,)")
+			required(ctx.modId, "[${ctx.baseVersion},)")
+			required("sable", "[2.0.0,3.0.0)")
+			required("simulated", "[1.3.0,)")
+			required("aeronautics", "[1.3.0,)")
+
+			val manifest = ForgeManifest(
+				license = ctx.licenseName, issueTrackerURL = ctx.issuesUrl, mods = listOf(
+					ForgeMod(
+						modId = addonModId,
+						displayName = "${ctx.modName} Create Aeronautics Compat",
+						version = ctx.baseVersion,
+						displayURL = ctx.homepageUrl,
+						modUrl = ctx.homepageUrl,
+						logoFile = "assets/icon.png",
+						authors = ctx.authors.joinToString(", "),
+						credits = "${ctx.authors.joinToString(", ")} Contributors: ${ctx.contributors.joinToString(", ")}",
+						description = "Create Aeronautics compatibility layer for ${ctx.modName}."
+					)
+				),
+				dependencies = mapOf(addonModId to forgeDeps)
+			)
+
+			return TOML.encodeToString(manifest)
+		}
 	}
 
 	object NeoForge : ForgeLike("neoforge") {
@@ -223,3 +293,5 @@ sealed class Loader(val id: String) {
 }
 
 private fun contentModId(ctx: Context): String = "${ctx.modId}_content"
+
+private fun createAeronauticsCompatModId(ctx: Context): String = "${ctx.modId}_compat_create_aeronautics"

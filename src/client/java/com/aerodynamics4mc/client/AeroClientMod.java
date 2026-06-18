@@ -4,6 +4,8 @@ import com.aerodynamics4mc.ModTemplate;
 import com.aerodynamics4mc.api.A4mcId;
 import com.aerodynamics4mc.api.A4mcVec3;
 import com.aerodynamics4mc.api.A4mcWorldRef;
+import com.aerodynamics4mc.api.AeroL2Request;
+import com.aerodynamics4mc.api.AeroL2Result;
 import com.aerodynamics4mc.api.AeroWindSample;
 import com.aerodynamics4mc.api.SamplePolicy;
 import com.aerodynamics4mc.api.client.AeroClientWindApi;
@@ -16,6 +18,7 @@ import com.aerodynamics4mc.network.packet.AeroFlowPacket;
 import com.aerodynamics4mc.network.packet.AeroLocalWeatherPacket;
 import com.aerodynamics4mc.network.packet.AeroMesoscaleMapPacket;
 import com.aerodynamics4mc.network.packet.AeroRuntimeStatePacket;
+import com.aerodynamics4mc.runtime.AeroL2WindTunnel;
 import com.github.razorplay.packet_handler.network.IPacket;
 import lombok.Getter;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -143,6 +146,11 @@ public final class AeroClientMod implements AeroClientWindRuntimeProvider {
 	}
 
 	// ====================== Static API ======================
+
+	@Override
+	public AeroL2Result runL2(AeroL2Request request) {
+		return AeroL2WindTunnel.run(request);
+	}
 
 	public static A4mcWorldRef worldRef(ClientLevel world) {
 		if (world == null) {
