@@ -21,6 +21,7 @@ public final class CreateAeronauticsCompat {
 		}
 		initialized = true;
 		registerPackets();
+		CreateAeronauticsServerNetworking.register();
 		CreateAeronauticsEnvironment environment = CreateAeronauticsEnvironment.detect();
 		if (!environment.available()) {
 			ModTemplate.LOGGER.warn(
@@ -35,7 +36,8 @@ public final class CreateAeronauticsCompat {
 	@SuppressWarnings("unchecked")
 	private static void registerPackets() {
 		Class<? extends IPacket>[] packetClasses = new Class[] {
-				CreateAeronauticsAirfoilSyncPacket.class
+				CreateAeronauticsAirfoilSyncPacket.class,
+				CreateAeronauticsAirfoilItemActionPacket.class
 		};
 		PacketTCP.registerPackets(packetClasses);
 	}

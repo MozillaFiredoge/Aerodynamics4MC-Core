@@ -1,0 +1,17 @@
+{
+  "format": "a4mc-airfoil-visual-v1",
+  "coordinates": [
+    { "x": 0.0, "y": 0.012 },
+    { "x": 1.0, "y": 0.012 },
+    { "x": 1.0, "y": -0.012 },
+    { "x": 0.0, "y": -0.012 }
+  ],
+  "chord_scale": 0.94,
+  "span_scale": 0.94,
+  "section_y_scale": 2.0,
+  "section_y_offset": 0.50,
+  "front_color": "#FFFFFF",
+  "back_color": "#A0A0A0",
+  "connector_color": "#CFCFCF",
+  "chord_color": "#FF6969"
+}

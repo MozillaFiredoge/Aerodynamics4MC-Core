@@ -31,7 +31,7 @@ public final class AirfoilWingBlockEntity extends BlockEntity {
 		this.airfoilId = airfoilId == null ? AeroAirfoilPresets.NACA_0012.id() : airfoilId;
 		setChanged();
 		if (level != null && !level.isClientSide()) {
-			level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+			syncBlockStateVariant();
 		}
 	}
 
@@ -73,6 +73,20 @@ public final class AirfoilWingBlockEntity extends BlockEntity {
 			airfoilId = A4mcId.parse(value);
 		} catch (IllegalArgumentException ignored) {
 			airfoilId = AeroAirfoilPresets.NACA_0012.id();
+		}
+	}
+
+	private void syncBlockStateVariant() {
+		BlockState state = getBlockState();
+		if (!state.hasProperty(AirfoilWingBlock.VARIANT)) {
+			level.sendBlockUpdated(worldPosition, state, state, 3);
+			return;
+		}
+		AirfoilWingVariant variant = AirfoilWingVariant.fromAirfoilId(airfoilId);
+		if (state.getValue(AirfoilWingBlock.VARIANT) != variant) {
+			level.setBlock(worldPosition, state.setValue(AirfoilWingBlock.VARIANT, variant), 3);
+		} else {
+			level.sendBlockUpdated(worldPosition, state, state, 3);
 		}
 	}
 }

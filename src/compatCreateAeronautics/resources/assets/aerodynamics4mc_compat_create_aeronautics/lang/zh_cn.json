@@ -1,4 +1,14 @@
 {
   "block.aerodynamics4mc_compat_create_aeronautics.airfoil_wing": "A4MC 翼型机翼",
-  "itemGroup.aerodynamics4mc_compat_create_aeronautics": "A4MC Create: Aeronautics 兼容"
+  "item.aerodynamics4mc_compat_create_aeronautics.airfoil_wing.tooltip.airfoil": "翼型：%s（%s）",
+  "item.aerodynamics4mc_compat_create_aeronautics.airfoil_wing.tooltip.open": "对空气右键以配置",
+  "itemGroup.aerodynamics4mc_compat_create_aeronautics": "A4MC Create: Aeronautics 兼容",
+  "screen.aerodynamics4mc_compat_create_aeronautics.airfoil_wing.title": "翼型机翼",
+  "screen.aerodynamics4mc_compat_create_aeronautics.airfoil_wing.static_load_hint": "自定义翼型 JSON 会在重启时从 world/aerodynamics4mc/airfoils 加载",
+  "screen.aerodynamics4mc_compat_create_aeronautics.airfoil_wing.use": "使用",
+  "screen.aerodynamics4mc_compat_create_aeronautics.airfoil_wing.export": "导出",
+  "screen.aerodynamics4mc_compat_create_aeronautics.airfoil_wing.preview_placeholder": "3D 预览待实现",
+  "screen.aerodynamics4mc_compat_create_aeronautics.airfoil_wing.no_airfoils": "没有翼型",
+  "screen.aerodynamics4mc_compat_create_aeronautics.airfoil_wing.no_selection": "未选择翼型",
+  "screen.aerodynamics4mc_compat_create_aeronautics.airfoil_wing.local_use": "已选择 %s"
 }

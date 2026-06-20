@@ -1,0 +1,7 @@
+{
+  "pack": {
+    "pack_format": 34,
+    "supported_formats": [34, 999],
+    "description": "A4MC example airfoil visuals and block models"
+  }
+}

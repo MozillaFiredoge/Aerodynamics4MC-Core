@@ -1,0 +1,22 @@
+{
+  "format": "a4mc-airfoil-visual-v1",
+  "coordinates": [
+    { "x": 1.0, "y": 0.010 },
+    { "x": 0.82, "y": 0.058 },
+    { "x": 0.55, "y": 0.092 },
+    { "x": 0.30, "y": 0.100 },
+    { "x": 0.0, "y": 0.000 },
+    { "x": 0.22, "y": -0.014 },
+    { "x": 0.50, "y": -0.018 },
+    { "x": 0.78, "y": -0.012 },
+    { "x": 1.0, "y": -0.002 }
+  ],
+  "chord_scale": 0.90,
+  "span_scale": 0.94,
+  "section_y_scale": 2.65,
+  "section_y_offset": 0.46,
+  "front_color": "#FFD0A6",
+  "back_color": "#B56B46",
+  "connector_color": "#E19A73",
+  "chord_color": "#FFF2A8"
+}

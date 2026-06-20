@@ -3,7 +3,6 @@ package com.aerodynamics4mc.compat.createaeronautics;
 import com.aerodynamics4mc.api.A4mcId;
 import com.aerodynamics4mc.api.A4mcVec3;
 import com.aerodynamics4mc.api.AeroAirfoilDefinition;
-import com.aerodynamics4mc.api.AeroAirfoilJson;
 import com.aerodynamics4mc.api.AeroAirfoilProfile;
 import com.aerodynamics4mc.api.AeroL2ForceMoment;
 import com.aerodynamics4mc.api.AeroL2Request;
@@ -29,8 +28,6 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
@@ -141,7 +138,7 @@ public final class CreateAeronauticsDebugCommands {
 									.executes(ctx -> airfoilList(ctx.getSource()))
 							)
 							.then(Commands.literal("use")
-									.then(Commands.argument("id", StringArgumentType.word())
+									.then(Commands.argument("id", StringArgumentType.greedyString())
 											.executes(ctx -> airfoilUse(
 													ctx.getSource(),
 													StringArgumentType.getString(ctx, "id")
@@ -149,7 +146,7 @@ public final class CreateAeronauticsDebugCommands {
 									)
 							)
 							.then(Commands.literal("export")
-									.then(Commands.argument("id", StringArgumentType.word())
+									.then(Commands.argument("id", StringArgumentType.greedyString())
 											.executes(ctx -> airfoilExport(
 													ctx.getSource(),
 													StringArgumentType.getString(ctx, "id")
@@ -323,10 +320,9 @@ public final class CreateAeronauticsDebugCommands {
 			return 0;
 		}
 		try {
-			Path outputPath = airfoilPathFor(airfoilRoot(source), id);
-			Files.createDirectories(outputPath.getParent());
-			Files.writeString(outputPath, AeroAirfoilJson.write(definition), StandardCharsets.UTF_8);
-			feedback(source, "Exported A4MC airfoil " + id + " to " + outputPath);
+			CreateAeronauticsAirfoilDiskStore.ExportResult result =
+					CreateAeronauticsAirfoilDiskStore.exportDefinition(source.getServer(), definition);
+			feedback(source, "Exported A4MC airfoil " + id + " to " + result.outputPath());
 			return 1;
 		} catch (IOException | IllegalArgumentException e) {
 			feedback(source, "Failed to export A4MC airfoil " + id + ": " + e.getMessage());
@@ -335,19 +331,10 @@ public final class CreateAeronauticsDebugCommands {
 	}
 
 	private static int airfoilImport(CommandSourceStack source, String pathText) {
-		try {
-			Path inputPath = resolveAirfoilPath(airfoilRoot(source), pathText);
-			AeroAirfoilDefinition definition = AeroAirfoilJson.read(Files.readString(inputPath, StandardCharsets.UTF_8));
-			CreateAeronauticsAirfoilLibrary.register(definition);
-			feedback(source, "Imported A4MC airfoil " + definition.id()
-					+ " name=\"" + definition.displayName() + "\" from " + inputPath);
-			feedback(source, "Use with: /aero_ca airfoil use " + definition.id());
-			CreateAeronauticsAirfoilSync.broadcast(source.getServer());
-			return 1;
-		} catch (IOException | IllegalArgumentException e) {
-			feedback(source, "Failed to import A4MC airfoil: " + e.getMessage());
-			return 0;
-		}
+		feedback(source, "Runtime A4MC airfoil import is disabled.");
+		feedback(source, "Place JSON files under " + airfoilRoot(source)
+				+ " and restart the server/client; requested path was \"" + pathText + "\".");
+		return 0;
 	}
 
 	private static int flightPolarStatus(CommandSourceStack source) {
@@ -677,49 +664,6 @@ public final class CreateAeronauticsDebugCommands {
 
 	private static Path airfoilRoot(CommandSourceStack source) {
 		return CreateAeronauticsAirfoilDiskStore.root(source.getServer());
-	}
-
-	private static Path airfoilPathFor(Path root, A4mcId id) {
-		Path path = root.resolve(id.namespace());
-		String[] segments = id.path().split("/");
-		for (int i = 0; i < segments.length; i++) {
-			String segment = safePathSegment(segments[i]);
-			path = path.resolve(i + 1 == segments.length ? segment + ".json" : segment);
-		}
-		return requireInside(root, path);
-	}
-
-	private static Path resolveAirfoilPath(Path root, String pathText) {
-		String safeText = pathText == null ? "" : pathText.trim();
-		if (safeText.isEmpty()) {
-			throw new IllegalArgumentException("path must not be empty");
-		}
-		if (!safeText.endsWith(".json")) {
-			safeText += ".json";
-		}
-		Path rawPath = Path.of(safeText);
-		if (rawPath.isAbsolute()) {
-			throw new IllegalArgumentException("path must be relative to " + root);
-		}
-		for (Path segment : rawPath) {
-			safePathSegment(segment.toString());
-		}
-		return requireInside(root, root.resolve(rawPath));
-	}
-
-	private static Path requireInside(Path root, Path path) {
-		Path safePath = path.toAbsolutePath().normalize();
-		if (!safePath.startsWith(root)) {
-			throw new IllegalArgumentException("path escapes airfoil root: " + path);
-		}
-		return safePath;
-	}
-
-	private static String safePathSegment(String segment) {
-		if (segment == null || segment.isBlank() || ".".equals(segment) || "..".equals(segment)) {
-			throw new IllegalArgumentException("invalid path segment: " + segment);
-		}
-		return segment;
 	}
 
 	private static String profileSummary(AeroAirfoilProfile profile) {

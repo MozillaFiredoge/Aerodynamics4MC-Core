@@ -1,4 +1,14 @@
 {
   "block.aerodynamics4mc_compat_create_aeronautics.airfoil_wing": "A4MC Airfoil Wing",
-  "itemGroup.aerodynamics4mc_compat_create_aeronautics": "A4MC Create Aeronautics Compat"
+  "item.aerodynamics4mc_compat_create_aeronautics.airfoil_wing.tooltip.airfoil": "Airfoil: %s (%s)",
+  "item.aerodynamics4mc_compat_create_aeronautics.airfoil_wing.tooltip.open": "Right-click in air to configure",
+  "itemGroup.aerodynamics4mc_compat_create_aeronautics": "A4MC Create Aeronautics Compat",
+  "screen.aerodynamics4mc_compat_create_aeronautics.airfoil_wing.title": "Airfoil Wing",
+  "screen.aerodynamics4mc_compat_create_aeronautics.airfoil_wing.static_load_hint": "Custom airfoil JSON files load from world/aerodynamics4mc/airfoils on restart",
+  "screen.aerodynamics4mc_compat_create_aeronautics.airfoil_wing.use": "Use",
+  "screen.aerodynamics4mc_compat_create_aeronautics.airfoil_wing.export": "Export",
+  "screen.aerodynamics4mc_compat_create_aeronautics.airfoil_wing.preview_placeholder": "3D preview pending",
+  "screen.aerodynamics4mc_compat_create_aeronautics.airfoil_wing.no_airfoils": "No airfoils",
+  "screen.aerodynamics4mc_compat_create_aeronautics.airfoil_wing.no_selection": "No airfoil selected",
+  "screen.aerodynamics4mc_compat_create_aeronautics.airfoil_wing.local_use": "Selected %s"
 }

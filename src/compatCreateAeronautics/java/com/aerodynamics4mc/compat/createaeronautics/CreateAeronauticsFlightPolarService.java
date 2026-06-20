@@ -10,7 +10,7 @@ import com.aerodynamics4mc.api.AeroPolarSample;
 import com.aerodynamics4mc.api.AeroPolarTable;
 import com.aerodynamics4mc.api.AeroSurfaceDescriptor;
 import com.aerodynamics4mc.api.AeroWindApi;
-import com.aerodynamics4mc.api.AeroWindSample;
+import com.aerodynamics4mc.api.GameplayWindSample;
 import com.aerodynamics4mc.api.SamplePolicy;
 import dev.ryanhcode.sable.api.block.BlockSubLevelLiftProvider;
 import dev.ryanhcode.sable.companion.math.Pose3d;
@@ -23,8 +23,8 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.VoxelShape;
 import org.joml.Vector3d;
 import org.joml.Vector3dc;
 
@@ -53,6 +53,16 @@ public final class CreateAeronauticsFlightPolarService {
 	private static final double GEOMETRIC_TORQUE_RESPONSE = 0.20;
 	private static final double MAX_GEOMETRIC_ANGULAR_IMPULSE_PER_SQUARE_METER = 5.0;
 	private static final double POLAR_ANGLE_EPSILON_DEGREES = 1.0e-6;
+	private static final int GROUND_EFFECT_MAX_SCAN_BLOCKS = 24;
+	private static final double GROUND_EFFECT_MAX_HEIGHT_TO_SPAN = 0.75;
+	private static final double GROUND_EFFECT_MAX_LIFT_BOOST = 0.18;
+	private static final double GROUND_EFFECT_MAX_INDUCED_DRAG_REDUCTION = 0.30;
+	private static final double SPANWISE_PARASITE_DRAG_COEFFICIENT = 0.04;
+	private static final double TURBULENCE_DRAG_BOOST = 0.22;
+	private static final double TURBULENCE_MAX_LIFT_LOSS = 0.08;
+	private static final double WIND_SHEAR_RESPONSE_PER_BLOCK = 4.0;
+	private static final double WIND_SHEAR_DRAG_BOOST = 0.18;
+	private static final double WIND_SHEAR_MAX_LIFT_LOSS = 0.06;
 
 	private final CreateAeronauticsWingScanner wingScanner = new CreateAeronauticsWingScanner();
 	private final CreateAeronauticsPolarCache polarCache = CreateAeronauticsPolarCache.INSTANCE;
@@ -168,7 +178,7 @@ public final class CreateAeronauticsFlightPolarService {
 			return;
 		}
 
-		ForcePreview forcePreview = previewForce(surface, frame, sample);
+		ForcePreview forcePreview = previewForce(surface, frame, sample, groundEffect(subLevel.getLevel(), surface, frame));
 		accumulateProviderForce(
 				subLevel,
 				forcePreview,
@@ -232,6 +242,12 @@ public final class CreateAeronauticsFlightPolarService {
 					+ " area=" + format3(snapshot.referenceAreaSquareMeters()) + "m^2"
 					+ " lift=" + format2(snapshot.liftNewtons()) + "N"
 					+ " drag=" + format2(snapshot.dragNewtons()) + "N");
+			if (!snapshot.contributions().isEmpty()) {
+				WingContribution primary = snapshot.contributions().get(0);
+				lines.add("Flight polar modifiers ground=" + formatGroundEffect(primary)
+						+ " wind=" + formatWindEnvironment(primary.windEnvironment())
+						+ " spanDrag=" + format2(primary.spanwiseDragNewtons()) + "N");
+			}
 			lines.add("Flight polar force=" + formatVec(snapshot.forcePreview())
 					+ "N moment=" + formatVec(snapshot.momentPreview()) + "Nm"
 					+ " pitchMoment=" + format2(snapshot.pitchingMomentNewtonMeters()) + "Nm");
@@ -272,6 +288,10 @@ public final class CreateAeronauticsFlightPolarService {
 					+ " speed=" + format3(contribution.relativeWindSpeedMetersPerSecond()) + "m/s"
 					+ " aoa=" + formatSigned3(contribution.angleOfAttackDegrees()) + "deg"
 					+ " " + sampleStatus
+					+ " ge=" + format3(contribution.groundEffectStrength())
+					+ " turb=" + format3(contribution.windEnvironment().turbulenceIntensity())
+					+ " shear=" + format4(contribution.windEnvironment().windShearMagnitudePerBlock())
+					+ " spanDrag=" + format2(contribution.spanwiseDragNewtons()) + "N"
 					+ " force=" + formatVec(contribution.forcePreview()) + "N"
 					+ " apply=" + contribution.forceApplyStatus());
 		}
@@ -419,7 +439,7 @@ public final class CreateAeronauticsFlightPolarService {
 				: 0.0;
 		AeroPolarSample sample = hasFlow && stableSpeed ? lookupCoveredPolarSample(table, angleOfAttackDegrees) : null;
 		boolean hasPolarSample = sample != null;
-		ForcePreview forcePreview = previewForce(surface, frame, sample);
+		ForcePreview forcePreview = previewForce(surface, frame, sample, groundEffect(world, surface, frame));
 		ForceApplication forceApplication = applyForces && hasPolarSample
 				? applyAerodynamicForce(subLevel, forcePreview, timeStepSeconds)
 				: ForceApplication.inactive(
@@ -436,6 +456,7 @@ public final class CreateAeronauticsFlightPolarService {
 				lookup.cacheHit(),
 				frame.samplePosition(),
 				frame.environmentWind(),
+				frame.windEnvironment(),
 				frame.bodyVelocity(),
 				frame.airfoilWind(),
 				relativeWindSpeed,
@@ -444,6 +465,11 @@ public final class CreateAeronauticsFlightPolarService {
 				sample == null ? 0.0 : sample.liftCoefficient(),
 				sample == null ? 0.0 : sample.dragCoefficient(),
 				sample == null ? 0.0 : sample.momentCoefficient(),
+				forcePreview.groundClearanceMeters(),
+				forcePreview.groundEffectStrength(),
+				forcePreview.groundLiftMultiplier(),
+				forcePreview.groundDragMultiplier(),
+				forcePreview.spanwiseDragNewtons(),
 				forcePreview.dynamicPressurePascals(),
 				forcePreview.referenceAreaSquareMeters(),
 				forcePreview.meanAerodynamicChordMeters(),
@@ -492,6 +518,7 @@ public final class CreateAeronauticsFlightPolarService {
 				lookup != null && lookup.cacheHit(),
 				frame.samplePosition(),
 				frame.environmentWind(),
+				frame.windEnvironment(),
 				frame.bodyVelocity(),
 				frame.airfoilWind(),
 				relativeWindSpeed,
@@ -500,6 +527,11 @@ public final class CreateAeronauticsFlightPolarService {
 				0.0,
 				0.0,
 				0.0,
+				forcePreview.groundClearanceMeters(),
+				forcePreview.groundEffectStrength(),
+				forcePreview.groundLiftMultiplier(),
+				forcePreview.groundDragMultiplier(),
+				forcePreview.spanwiseDragNewtons(),
 				0.0,
 				forcePreview.referenceAreaSquareMeters(),
 				forcePreview.meanAerodynamicChordMeters(),
@@ -525,13 +557,10 @@ public final class CreateAeronauticsFlightPolarService {
 	) {
 		BlockPos pos = context.pos();
 		BlockState state = context.state();
-		Direction noseDirection = state == null
-				? Direction.NORTH
-				: state.getOptionalValue(BlockStateProperties.HORIZONTAL_FACING).orElse(Direction.NORTH);
 		A4mcVec3 localOrigin = A4mcVec3.of(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
-		A4mcVec3 chordDirection = directionVector(noseDirection);
-		A4mcVec3 spanDirection = directionVector(spanDirection(noseDirection));
-		A4mcVec3 normalDirection = A4mcVec3.of(0.0, 1.0, 0.0);
+		A4mcVec3 chordDirection = directionVector(AirfoilWingBlock.chordDirection(state));
+		A4mcVec3 spanDirection = directionVector(AirfoilWingBlock.spanDirection(state));
+		A4mcVec3 normalDirection = directionVector(AirfoilWingBlock.normalDirection(state));
 		if (providerPose != null) {
 			localOrigin = transformPosition(providerPose, localOrigin);
 			chordDirection = transformNormal(providerPose, chordDirection);
@@ -585,8 +614,8 @@ public final class CreateAeronauticsFlightPolarService {
 		Pose3d logicalPose = subLevel.logicalPose();
 		A4mcVec3 localSamplePosition = surface.localOriginMeters();
 		A4mcVec3 samplePosition = transformPosition(logicalPose, localSamplePosition);
-		A4mcVec3 environmentWindWorld = sampleEnvironmentWind(subLevel.getLevel(), samplePosition);
-		A4mcVec3 environmentWind = transformNormalInverse(logicalPose, environmentWindWorld);
+		WindEnvironmentSample windEnvironment = sampleEnvironmentWind(subLevel.getLevel(), samplePosition);
+		A4mcVec3 environmentWind = transformNormalInverse(logicalPose, windEnvironment.velocity());
 		A4mcVec3 bodyVelocity = pointBodyVelocityLocal(
 				logicalPose,
 				localSamplePosition,
@@ -606,7 +635,10 @@ public final class CreateAeronauticsFlightPolarService {
 				normalizeOr(surface.chordDirection(), A4mcVec3.of(0.0, 0.0, -1.0)),
 				spanDirection,
 				normalizeOr(surface.normalDirection(), A4mcVec3.of(0.0, 1.0, 0.0)),
-				"pos=sable_pose,dir=provider_local,wind=sable_pose_inverse,body=sable_velocity"
+				windEnvironment,
+				"pos=sable_pose,dir=provider_local,wind=sable_pose_inverse"
+						+ ",windEnv=" + windEnvironment.source()
+						+ ",body=sable_velocity"
 		);
 	}
 
@@ -841,9 +873,9 @@ public final class CreateAeronauticsFlightPolarService {
 		A4mcVec3 chordDirection = normalizeOr(surface.chordDirection(), A4mcVec3.of(0.0, 0.0, -1.0));
 		A4mcVec3 spanDirection = normalizeOr(surface.spanDirection(), A4mcVec3.of(1.0, 0.0, 0.0));
 		A4mcVec3 normalDirection = normalizeOr(surface.normalDirection(), A4mcVec3.of(0.0, 1.0, 0.0));
-		A4mcVec3 environmentWindWorld = sampleEnvironmentWind(world, samplePosition);
+		WindEnvironmentSample windEnvironment = sampleEnvironmentWind(world, samplePosition);
 		VelocitySample bodyVelocityWorld = sampleBodyVelocity(world, subLevel, localSamplePosition);
-		TransformSample environmentWind = transformNormalInverse(pose, environmentWindWorld);
+		TransformSample environmentWind = transformNormalInverse(pose, windEnvironment.velocity());
 		TransformSample bodyVelocity = transformNormalInverse(pose, bodyVelocityWorld.vector());
 		A4mcVec3 relativeWind = environmentWind.vector().subtract(bodyVelocity.vector());
 		A4mcVec3 airfoilWind = removeSpanwiseFlow(relativeWind, spanDirection);
@@ -857,30 +889,59 @@ public final class CreateAeronauticsFlightPolarService {
 				chordDirection,
 				spanDirection,
 				normalDirection,
+				windEnvironment,
 				"pos=" + positionSample.source()
 						+ ",dir=local"
 						+ ",wind=" + environmentWind.source()
+						+ ",windEnv=" + windEnvironment.source()
 						+ ",body=" + bodyVelocityWorld.source() + "->" + bodyVelocity.source()
 						+ ",flow=chord_normal"
 		);
 	}
 
-	private static ForcePreview previewForce(AeroSurfaceDescriptor surface, FlightFrame frame, AeroPolarSample sample) {
+	private static ForcePreview previewForce(
+			AeroSurfaceDescriptor surface,
+			FlightFrame frame,
+			AeroPolarSample sample,
+			GroundEffectSample groundEffect
+	) {
 		double area = surface.areaSquareMeters();
 		double meanChord = surface.meanAerodynamicChordMeters();
 		if (sample == null) {
 			return ForcePreview.zero(area, meanChord, frame.localSamplePosition());
 		}
+		GroundEffectSample safeGroundEffect = groundEffect == null ? GroundEffectSample.NONE : groundEffect;
+		WindEnvironmentSample safeWindEnvironment = frame.windEnvironment() == null
+				? WindEnvironmentSample.NONE
+				: frame.windEnvironment();
 
 		double speed = frame.airfoilWind().length();
 		double dynamicPressure = 0.5 * AIR_DENSITY_KG_PER_CUBIC_METER * speed * speed;
-		double liftNewtons = dynamicPressure * area * sample.liftCoefficient();
-		double dragNewtons = dynamicPressure * area * sample.dragCoefficient();
+		double liftCoefficient = sample.liftCoefficient()
+				* safeGroundEffect.liftMultiplier()
+				* safeWindEnvironment.liftMultiplier();
+		double baseDragCoefficient = baseProfileDragCoefficient(surface.airfoilProfile());
+		double inducedDragCoefficient = Math.max(0.0, sample.dragCoefficient() - baseDragCoefficient);
+		double dragCoefficient = (baseDragCoefficient + inducedDragCoefficient * safeGroundEffect.dragMultiplier())
+				* safeWindEnvironment.dragMultiplier();
+		double liftNewtons = dynamicPressure * area * liftCoefficient;
+		double polarDragNewtons = dynamicPressure * area * dragCoefficient;
+		A4mcVec3 spanwiseWind = frame.relativeWind().subtract(frame.airfoilWind());
+		double spanwiseSpeed = spanwiseWind.length();
+		double spanwiseDynamicPressure = 0.5 * AIR_DENSITY_KG_PER_CUBIC_METER * spanwiseSpeed * spanwiseSpeed;
+		double spanwiseDragNewtons = spanwiseDynamicPressure
+				* area
+				* SPANWISE_PARASITE_DRAG_COEFFICIENT
+				* safeWindEnvironment.dragMultiplier();
+		double dragNewtons = polarDragNewtons + spanwiseDragNewtons;
 		double pitchingMomentNewtonMeters = dynamicPressure * area * meanChord * sample.momentCoefficient();
 
 		A4mcVec3 dragDirection = normalizeOr(frame.airfoilWind(), A4mcVec3.ZERO);
 		A4mcVec3 liftDirection = liftDirection(frame.spanDirection(), frame.normalDirection(), dragDirection);
-		A4mcVec3 dragForce = dragDirection.scale(dragNewtons);
+		A4mcVec3 dragForce = dragDirection.scale(polarDragNewtons);
+		if (spanwiseDragNewtons > 0.0) {
+			dragForce = dragForce.add(normalizeOr(spanwiseWind, A4mcVec3.ZERO).scale(spanwiseDragNewtons));
+		}
 		A4mcVec3 liftForce = liftDirection.scale(liftNewtons);
 		A4mcVec3 force = dragForce.add(liftForce);
 		A4mcVec3 moment = frame.spanDirection().scale(pitchingMomentNewtonMeters);
@@ -891,11 +952,90 @@ public final class CreateAeronauticsFlightPolarService {
 				liftNewtons,
 				dragNewtons,
 				pitchingMomentNewtonMeters,
+				safeGroundEffect.clearanceMeters(),
+				safeGroundEffect.strength(),
+				safeGroundEffect.liftMultiplier(),
+				safeGroundEffect.dragMultiplier(),
+				spanwiseDragNewtons,
 				frame.localSamplePosition(),
 				force,
 				liftForce,
 				dragForce,
 				moment
+		);
+	}
+
+	private static GroundEffectSample groundEffect(ServerLevel world, AeroSurfaceDescriptor surface, FlightFrame frame) {
+		if (world == null || surface == null || frame == null || !groundEffectEligible(surface)) {
+			return GroundEffectSample.NONE;
+		}
+		double span = Math.max(1.0, surface.spanMeters());
+		double maxClearance = Math.min(GROUND_EFFECT_MAX_SCAN_BLOCKS, Math.max(1.0, span * GROUND_EFFECT_MAX_HEIGHT_TO_SPAN));
+		double clearance = groundClearanceMeters(world, frame.samplePosition(), maxClearance);
+		if (!Double.isFinite(clearance) || clearance > maxClearance) {
+			return GroundEffectSample.NONE;
+		}
+		double heightToSpan = Math.max(0.02, clearance / span);
+		double strength = 1.0 / (1.0 + 64.0 * heightToSpan * heightToSpan);
+		strength = clamp(strength, 0.0, 1.0);
+		return new GroundEffectSample(
+				clearance,
+				strength,
+				1.0 + GROUND_EFFECT_MAX_LIFT_BOOST * strength,
+				1.0 - GROUND_EFFECT_MAX_INDUCED_DRAG_REDUCTION * strength
+		);
+	}
+
+	private static boolean groundEffectEligible(AeroSurfaceDescriptor surface) {
+		A4mcVec3 span = normalizeOr(surface.spanDirection(), A4mcVec3.ZERO);
+		A4mcVec3 normal = normalizeOr(surface.normalDirection(), A4mcVec3.ZERO);
+		return Math.abs(span.y()) < 0.5 && Math.abs(normal.y()) > 0.5;
+	}
+
+	private static double groundClearanceMeters(ServerLevel world, A4mcVec3 samplePosition, double maxDistanceMeters) {
+		if (world == null || samplePosition == null || !Double.isFinite(maxDistanceMeters) || maxDistanceMeters <= 0.0) {
+			return Double.POSITIVE_INFINITY;
+		}
+		double sampleX = samplePosition.x();
+		double sampleY = samplePosition.y();
+		double sampleZ = samplePosition.z();
+		if (!Double.isFinite(sampleX) || !Double.isFinite(sampleY) || !Double.isFinite(sampleZ)) {
+			return Double.POSITIVE_INFINITY;
+		}
+
+		int x = (int) Math.floor(sampleX);
+		int z = (int) Math.floor(sampleZ);
+		int startY = (int) Math.floor(sampleY - 0.05);
+		int minY = Math.max(world.getMinY(), (int) Math.floor(sampleY - maxDistanceMeters) - 1);
+		BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+		for (int y = startY; y >= minY; y--) {
+			cursor.set(x, y, z);
+			BlockState state = world.getBlockState(cursor);
+			if (state.isAir()) {
+				continue;
+			}
+			VoxelShape shape = state.getCollisionShape(world, cursor);
+			if (shape.isEmpty()) {
+				continue;
+			}
+			double topY = y + shape.bounds().maxY;
+			return Math.max(0.0, sampleY - topY);
+		}
+		return Double.POSITIVE_INFINITY;
+	}
+
+	private static double baseProfileDragCoefficient(AeroAirfoilProfile profile) {
+		if (profile == null) {
+			return 0.02;
+		}
+		if (profile.kind() == AeroAirfoilProfile.Kind.FLAT_PLATE) {
+			return 0.035;
+		}
+		double thickness = profile.thicknessRatio();
+		return clamp(
+				0.012 + 0.08 * thickness * thickness + 0.4 * profile.maxCamberRatio() * profile.maxCamberRatio(),
+				0.012,
+				0.035
 		);
 	}
 
@@ -1068,6 +1208,7 @@ public final class CreateAeronauticsFlightPolarService {
 			boolean cacheHit,
 			A4mcVec3 samplePosition,
 			A4mcVec3 environmentWind,
+			WindEnvironmentSample windEnvironment,
 			A4mcVec3 bodyVelocity,
 			A4mcVec3 relativeWind,
 			double relativeWindSpeedMetersPerSecond,
@@ -1076,6 +1217,11 @@ public final class CreateAeronauticsFlightPolarService {
 			double liftCoefficient,
 			double dragCoefficient,
 			double momentCoefficient,
+			double groundClearanceMeters,
+			double groundEffectStrength,
+			double groundLiftMultiplier,
+			double groundDragMultiplier,
+			double spanwiseDragNewtons,
 			double dynamicPressurePascals,
 			double referenceAreaSquareMeters,
 			double meanAerodynamicChordMeters,
@@ -1099,6 +1245,7 @@ public final class CreateAeronauticsFlightPolarService {
 			cacheKeyHash = Objects.requireNonNullElse(cacheKeyHash, "");
 			samplePosition = samplePosition == null ? A4mcVec3.ZERO : samplePosition;
 			environmentWind = environmentWind == null ? A4mcVec3.ZERO : environmentWind;
+			windEnvironment = windEnvironment == null ? WindEnvironmentSample.NONE : windEnvironment;
 			bodyVelocity = bodyVelocity == null ? A4mcVec3.ZERO : bodyVelocity;
 			relativeWind = relativeWind == null ? A4mcVec3.ZERO : relativeWind;
 			forcePreview = forcePreview == null ? A4mcVec3.ZERO : forcePreview;
@@ -1121,8 +1268,22 @@ public final class CreateAeronauticsFlightPolarService {
 			A4mcVec3 chordDirection,
 			A4mcVec3 spanDirection,
 			A4mcVec3 normalDirection,
+			WindEnvironmentSample windEnvironment,
 			String source
 	) {
+		private FlightFrame {
+			samplePosition = samplePosition == null ? A4mcVec3.ZERO : samplePosition;
+			localSamplePosition = localSamplePosition == null ? A4mcVec3.ZERO : localSamplePosition;
+			environmentWind = environmentWind == null ? A4mcVec3.ZERO : environmentWind;
+			bodyVelocity = bodyVelocity == null ? A4mcVec3.ZERO : bodyVelocity;
+			relativeWind = relativeWind == null ? A4mcVec3.ZERO : relativeWind;
+			airfoilWind = airfoilWind == null ? A4mcVec3.ZERO : airfoilWind;
+			chordDirection = chordDirection == null ? A4mcVec3.ZERO : chordDirection;
+			spanDirection = spanDirection == null ? A4mcVec3.ZERO : spanDirection;
+			normalDirection = normalDirection == null ? A4mcVec3.ZERO : normalDirection;
+			windEnvironment = windEnvironment == null ? WindEnvironmentSample.NONE : windEnvironment;
+			source = Objects.requireNonNullElse(source, "");
+		}
 	}
 
 	private record ForcePreview(
@@ -1132,6 +1293,11 @@ public final class CreateAeronauticsFlightPolarService {
 			double liftNewtons,
 			double dragNewtons,
 			double pitchingMomentNewtonMeters,
+			double groundClearanceMeters,
+			double groundEffectStrength,
+			double groundLiftMultiplier,
+			double groundDragMultiplier,
+			double spanwiseDragNewtons,
 			A4mcVec3 applicationPoint,
 			A4mcVec3 force,
 			A4mcVec3 liftForce,
@@ -1150,6 +1316,11 @@ public final class CreateAeronauticsFlightPolarService {
 					0.0,
 					0.0,
 					0.0,
+					Double.POSITIVE_INFINITY,
+					0.0,
+					1.0,
+					1.0,
+					0.0,
 					applicationPoint,
 					A4mcVec3.ZERO,
 					A4mcVec3.ZERO,
@@ -1157,6 +1328,86 @@ public final class CreateAeronauticsFlightPolarService {
 					A4mcVec3.ZERO
 			);
 		}
+	}
+
+	private record WindEnvironmentSample(
+			A4mcVec3 velocity,
+			double turbulenceIntensity,
+			double windShearMagnitudePerBlock,
+			double windShearStrength,
+			double updraftMetersPerSecond,
+			double shelterFactor,
+			double ablMixingStrength,
+			double liftMultiplier,
+			double dragMultiplier,
+			String source
+	) {
+		private static final WindEnvironmentSample NONE = new WindEnvironmentSample(
+				A4mcVec3.ZERO,
+				0.0,
+				0.0,
+				0.0,
+				0.0,
+				0.0,
+				0.0,
+				1.0,
+				1.0,
+				"none"
+		);
+
+		private static WindEnvironmentSample from(GameplayWindSample sample) {
+			GameplayWindSample safeSample = sample == null ? GameplayWindSample.ZERO : sample;
+			if (!safeSample.hasFlow()) {
+				return NONE;
+			}
+			double turbulence = clamp(finiteOrZero(safeSample.turbulenceIntensity()), 0.0, 1.0);
+			double shearMagnitude = Math.max(0.0, finiteOrZero(safeSample.windShearMagnitudePerBlock()));
+			double shearStrength = clamp(shearMagnitude * WIND_SHEAR_RESPONSE_PER_BLOCK, 0.0, 1.0);
+			double liftMultiplier = (1.0 - TURBULENCE_MAX_LIFT_LOSS * turbulence)
+					* (1.0 - WIND_SHEAR_MAX_LIFT_LOSS * shearStrength);
+			double dragMultiplier = 1.0
+					+ TURBULENCE_DRAG_BOOST * turbulence
+					+ WIND_SHEAR_DRAG_BOOST * shearStrength;
+			return new WindEnvironmentSample(
+					safeSample.effectiveVelocityVector(),
+					turbulence,
+					shearMagnitude,
+					shearStrength,
+					finiteOrZero(safeSample.updraftMetersPerSecond()),
+					clamp(finiteOrZero(safeSample.shelterFactor()), 0.0, 1.0),
+					Math.max(0.0, finiteOrZero(safeSample.ablMixingStrength())),
+					Math.max(0.0, liftMultiplier),
+					Math.max(1.0, dragMultiplier),
+					safeSample.sourceLevel().name() + "/" + safeSample.authority().name()
+			);
+		}
+
+		private WindEnvironmentSample {
+			velocity = velocity == null ? A4mcVec3.ZERO : velocity;
+			turbulenceIntensity = clamp(finiteOrZero(turbulenceIntensity), 0.0, 1.0);
+			windShearMagnitudePerBlock = Math.max(0.0, finiteOrZero(windShearMagnitudePerBlock));
+			windShearStrength = clamp(finiteOrZero(windShearStrength), 0.0, 1.0);
+			updraftMetersPerSecond = finiteOrZero(updraftMetersPerSecond);
+			shelterFactor = clamp(finiteOrZero(shelterFactor), 0.0, 1.0);
+			ablMixingStrength = Math.max(0.0, finiteOrZero(ablMixingStrength));
+			liftMultiplier = Math.max(0.0, finiteOrZero(liftMultiplier));
+			dragMultiplier = Math.max(1.0, finiteOrZero(dragMultiplier));
+			source = Objects.requireNonNullElse(source, "");
+		}
+	}
+
+	private record GroundEffectSample(
+			double clearanceMeters,
+			double strength,
+			double liftMultiplier,
+			double dragMultiplier
+	) {
+		private static final GroundEffectSample NONE = new GroundEffectSample(
+				Double.POSITIVE_INFINITY,
+				0.0,
+				1.0,
+				1.0
+		);
 	}
 
 	private record ForceApplication(
@@ -1235,11 +1486,14 @@ public final class CreateAeronauticsFlightPolarService {
 				.newInstance(vector.x(), vector.y(), vector.z());
 	}
 
-	private static A4mcVec3 sampleEnvironmentWind(ServerLevel world, A4mcVec3 samplePosition) {
+	private static WindEnvironmentSample sampleEnvironmentWind(ServerLevel world, A4mcVec3 samplePosition) {
+		if (world == null || samplePosition == null) {
+			return WindEnvironmentSample.NONE;
+		}
 		Identifier id = world.dimension().identifier();
 		A4mcWorldRef worldRef = A4mcWorldRef.server(A4mcId.of(id.getNamespace(), id.getPath()), world);
-		AeroWindSample sample = AeroWindApi.sample(worldRef, samplePosition, SamplePolicy.GAMEPLAY_SERVER_ONLY);
-		return sample.effectiveVelocityVector();
+		GameplayWindSample sample = AeroWindApi.sampleGameplay(worldRef, samplePosition, SamplePolicy.GAMEPLAY_SERVER_ONLY);
+		return WindEnvironmentSample.from(sample);
 	}
 
 	private static VelocitySample sampleBodyVelocity(ServerLevel world, Object subLevel, A4mcVec3 localSamplePosition) {
@@ -1345,13 +1599,6 @@ public final class CreateAeronauticsFlightPolarService {
 		}
 		logicalPose.transformNormalInverse(velocity, velocity);
 		return fromJoml(velocity);
-	}
-
-	private static Direction spanDirection(Direction noseDirection) {
-		return switch (noseDirection) {
-			case EAST, WEST -> Direction.SOUTH;
-			default -> Direction.EAST;
-		};
 	}
 
 	private static A4mcVec3 directionVector(Direction direction) {
@@ -1559,6 +1806,14 @@ public final class CreateAeronauticsFlightPolarService {
 		return safeVector.scale(maxLength / length);
 	}
 
+	private static double clamp(double value, double min, double max) {
+		return Math.max(min, Math.min(max, value));
+	}
+
+	private static double finiteOrZero(double value) {
+		return Double.isFinite(value) ? value : 0.0;
+	}
+
 	private static Vec3 toMinecraft(A4mcVec3 vector) {
 		A4mcVec3 safeVector = vector == null ? A4mcVec3.ZERO : vector;
 		return new Vec3(safeVector.x(), safeVector.y(), safeVector.z());
@@ -1573,6 +1828,31 @@ public final class CreateAeronauticsFlightPolarService {
 
 	private static String formatVec(A4mcVec3 vec) {
 		return "(" + format3(vec.x()) + ", " + format3(vec.y()) + ", " + format3(vec.z()) + ")";
+	}
+
+	private static String formatGroundEffect(WingContribution contribution) {
+		if (contribution == null || contribution.groundEffectStrength() <= 0.0) {
+			return "off";
+		}
+		String clearance = Double.isFinite(contribution.groundClearanceMeters())
+				? format3(contribution.groundClearanceMeters()) + "m"
+				: "unknown";
+		return "h=" + clearance
+				+ " strength=" + format3(contribution.groundEffectStrength())
+				+ " liftx=" + format3(contribution.groundLiftMultiplier())
+				+ " dragx=" + format3(contribution.groundDragMultiplier());
+	}
+
+	private static String formatWindEnvironment(WindEnvironmentSample sample) {
+		WindEnvironmentSample safeSample = sample == null ? WindEnvironmentSample.NONE : sample;
+		return "src=" + safeSample.source()
+				+ " turb=" + format3(safeSample.turbulenceIntensity())
+				+ " shear=" + format4(safeSample.windShearMagnitudePerBlock()) + "/block"
+				+ " updraft=" + formatSigned3(safeSample.updraftMetersPerSecond()) + "m/s"
+				+ " shelter=" + format3(safeSample.shelterFactor())
+				+ " mix=" + format3(safeSample.ablMixingStrength())
+				+ " liftx=" + format3(safeSample.liftMultiplier())
+				+ " dragx=" + format3(safeSample.dragMultiplier());
 	}
 
 	private static String formatSigned3(double value) {

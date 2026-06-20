@@ -4,6 +4,7 @@ package com.aerodynamics4mc.network.neo;
 import com.aerodynamics4mc.ModTemplate;
 import com.aerodynamics4mc.network.ClientPacketHandler;
 import com.aerodynamics4mc.network.ForgeCustomPayload;
+import com.aerodynamics4mc.network.ServerPacketHandler;
 import com.aerodynamics4mc.network.packet.AeroClientL2PreferencePacket;
 import com.aerodynamics4mc.network.packet.AeroMesoscaleMapRequestPacket;
 import com.aerodynamics4mc.runtime.AeroServerRuntime;
@@ -56,6 +57,9 @@ public class NetworkHandler {
 		context.enqueueWork(() -> {
 			IPacket packet = payload.packet();
 			ServerPlayer player = (ServerPlayer) context.player();
+			if (ServerPacketHandler.handle(packet, player, context)) {
+				return;
+			}
 
 			switch (packet) {
 				case AeroClientL2PreferencePacket pkt ->

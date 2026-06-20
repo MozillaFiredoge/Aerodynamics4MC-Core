@@ -1,18 +1,153 @@
 {
   "variants": {
-    "facing=north": {
-      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing"
+    "facing=north,vertical=false,variant=flat_plate": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/flat_plate"
     },
-    "facing=east": {
-      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing",
+    "facing=north,vertical=false,variant=naca_0012": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_0012"
+    },
+    "facing=north,vertical=false,variant=naca_2412": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_2412"
+    },
+    "facing=north,vertical=false,variant=naca_4412": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_4412"
+    },
+    "facing=north,vertical=false,variant=custom": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/custom"
+    },
+    "facing=north,vertical=true,variant=flat_plate": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/flat_plate_vertical"
+    },
+    "facing=north,vertical=true,variant=naca_0012": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_0012_vertical"
+    },
+    "facing=north,vertical=true,variant=naca_2412": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_2412_vertical"
+    },
+    "facing=north,vertical=true,variant=naca_4412": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_4412_vertical"
+    },
+    "facing=north,vertical=true,variant=custom": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/custom_vertical"
+    },
+    "facing=east,vertical=false,variant=flat_plate": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/flat_plate",
       "y": 90
     },
-    "facing=south": {
-      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing",
+    "facing=east,vertical=false,variant=naca_0012": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_0012",
+      "y": 90
+    },
+    "facing=east,vertical=false,variant=naca_2412": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_2412",
+      "y": 90
+    },
+    "facing=east,vertical=false,variant=naca_4412": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_4412",
+      "y": 90
+    },
+    "facing=east,vertical=false,variant=custom": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/custom",
+      "y": 90
+    },
+    "facing=east,vertical=true,variant=flat_plate": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/flat_plate_vertical",
+      "y": 90
+    },
+    "facing=east,vertical=true,variant=naca_0012": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_0012_vertical",
+      "y": 90
+    },
+    "facing=east,vertical=true,variant=naca_2412": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_2412_vertical",
+      "y": 90
+    },
+    "facing=east,vertical=true,variant=naca_4412": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_4412_vertical",
+      "y": 90
+    },
+    "facing=east,vertical=true,variant=custom": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/custom_vertical",
+      "y": 90
+    },
+    "facing=south,vertical=false,variant=flat_plate": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/flat_plate",
       "y": 180
     },
-    "facing=west": {
-      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing",
+    "facing=south,vertical=false,variant=naca_0012": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_0012",
+      "y": 180
+    },
+    "facing=south,vertical=false,variant=naca_2412": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_2412",
+      "y": 180
+    },
+    "facing=south,vertical=false,variant=naca_4412": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_4412",
+      "y": 180
+    },
+    "facing=south,vertical=false,variant=custom": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/custom",
+      "y": 180
+    },
+    "facing=south,vertical=true,variant=flat_plate": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/flat_plate_vertical",
+      "y": 180
+    },
+    "facing=south,vertical=true,variant=naca_0012": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_0012_vertical",
+      "y": 180
+    },
+    "facing=south,vertical=true,variant=naca_2412": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_2412_vertical",
+      "y": 180
+    },
+    "facing=south,vertical=true,variant=naca_4412": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_4412_vertical",
+      "y": 180
+    },
+    "facing=south,vertical=true,variant=custom": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/custom_vertical",
+      "y": 180
+    },
+    "facing=west,vertical=false,variant=flat_plate": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/flat_plate",
+      "y": 270
+    },
+    "facing=west,vertical=false,variant=naca_0012": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_0012",
+      "y": 270
+    },
+    "facing=west,vertical=false,variant=naca_2412": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_2412",
+      "y": 270
+    },
+    "facing=west,vertical=false,variant=naca_4412": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_4412",
+      "y": 270
+    },
+    "facing=west,vertical=false,variant=custom": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/custom",
+      "y": 270
+    },
+    "facing=west,vertical=true,variant=flat_plate": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/flat_plate_vertical",
+      "y": 270
+    },
+    "facing=west,vertical=true,variant=naca_0012": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_0012_vertical",
+      "y": 270
+    },
+    "facing=west,vertical=true,variant=naca_2412": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_2412_vertical",
+      "y": 270
+    },
+    "facing=west,vertical=true,variant=naca_4412": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/naca_4412_vertical",
+      "y": 270
+    },
+    "facing=west,vertical=true,variant=custom": {
+      "model": "aerodynamics4mc_compat_create_aeronautics:block/airfoil_wing/generated/custom_vertical",
       "y": 270
     }
   }

@@ -5,6 +5,7 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.CreativeModeTab;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntityType;
@@ -82,6 +83,12 @@ public final class CreateAeronauticsCompatBlocks {
 	}
 
 	private static <T extends Block> void registerBlockItem(String name, DeferredBlock<T> block) {
-		ITEMS.registerItem(name, properties -> new BlockItem(block.get(), properties/*? if >=1.21.11 {*/.useBlockDescriptionPrefix()/*?}*/));
+		ITEMS.registerItem(name, properties -> {
+			Item.Properties itemProperties = properties/*? if >=1.21.11 {*/.useBlockDescriptionPrefix()/*?}*/;
+			if (AIRFOIL_WING_PATH.equals(name)) {
+				return new AirfoilWingBlockItem(block.get(), itemProperties);
+			}
+			return new BlockItem(block.get(), itemProperties);
+		});
 	}
 }

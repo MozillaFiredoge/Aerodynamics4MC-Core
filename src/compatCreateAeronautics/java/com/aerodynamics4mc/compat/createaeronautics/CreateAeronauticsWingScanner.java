@@ -11,7 +11,6 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.chunk.LevelChunk;
 
 import java.lang.reflect.InvocationTargetException;
@@ -104,15 +103,13 @@ public final class CreateAeronauticsWingScanner {
 		if (!CreateAeronauticsCompatBlocks.isA4mcWingBlockId(blockId)) {
 			return null;
 		}
-		Direction noseDirection = state.getOptionalValue(BlockStateProperties.HORIZONTAL_FACING).orElse(Direction.NORTH);
-		Direction spanDirection = spanDirection(noseDirection);
 		AeroAirfoilProfile profile = airfoilProfile(chunk, pos);
 		return new WingBlockInfo(
 				blockId,
 				profile,
-				directionVector(noseDirection),
-				directionVector(spanDirection),
-				A4mcVec3.of(0.0, 1.0, 0.0)
+				directionVector(AirfoilWingBlock.chordDirection(state)),
+				directionVector(AirfoilWingBlock.spanDirection(state)),
+				directionVector(AirfoilWingBlock.normalDirection(state))
 		);
 	}
 
@@ -122,13 +119,6 @@ public final class CreateAeronauticsWingScanner {
 			return CreateAeronauticsAirfoilLibrary.profileOrSelected(wing.airfoilId());
 		}
 		return CreateAeronauticsAirfoilLibrary.selectedProfile();
-	}
-
-	private static Direction spanDirection(Direction chordDirection) {
-		return switch (chordDirection) {
-			case EAST, WEST -> Direction.SOUTH;
-			default -> Direction.EAST;
-		};
 	}
 
 	private static A4mcVec3 directionVector(Direction direction) {
@@ -149,6 +139,7 @@ public final class CreateAeronauticsWingScanner {
 			BlockPos seed = unvisited.iterator().next();
 			unvisited.remove(seed);
 
+			WingBlockInfo seedInfo = wingBlocks.get(seed);
 			List<BlockPos> blocks = new ArrayList<>();
 			ArrayDeque<BlockPos> queue = new ArrayDeque<>();
 			queue.add(seed);
@@ -157,7 +148,7 @@ public final class CreateAeronauticsWingScanner {
 				blocks.add(current);
 				for (Direction direction : Direction.values()) {
 					BlockPos neighbor = current.relative(direction);
-					if (unvisited.remove(neighbor)) {
+					if (compatibleWingBlocks(seedInfo, wingBlocks.get(neighbor)) && unvisited.remove(neighbor)) {
 						queue.add(neighbor);
 					}
 				}
@@ -175,6 +166,16 @@ public final class CreateAeronauticsWingScanner {
 			indexedGroups.add(groups.get(i).withIndex(i));
 		}
 		return List.copyOf(indexedGroups);
+	}
+
+	private static boolean compatibleWingBlocks(WingBlockInfo a, WingBlockInfo b) {
+		return a != null
+				&& b != null
+				&& Objects.equals(a.blockId(), b.blockId())
+				&& Objects.equals(a.profile().id(), b.profile().id())
+				&& Objects.equals(vectorKey(a.chordDirection()), vectorKey(b.chordDirection()))
+				&& Objects.equals(vectorKey(a.spanDirection()), vectorKey(b.spanDirection()))
+				&& Objects.equals(vectorKey(a.normalDirection()), vectorKey(b.normalDirection()));
 	}
 
 	private static WingGroup toWingGroup(List<BlockPos> blocks, Map<BlockPos, WingBlockInfo> wingBlocks) {
@@ -248,7 +249,9 @@ public final class CreateAeronauticsWingScanner {
 		for (BlockPos block : sorted) {
 			WingBlockInfo info = wingBlocks.get(block);
 			update(digest, block.getX() + "," + block.getY() + "," + block.getZ() + ":" + info.blockId()
-					+ ":" + vectorKey(info.chordDirection()));
+					+ ":" + vectorKey(info.chordDirection())
+					+ ":" + vectorKey(info.spanDirection())
+					+ ":" + vectorKey(info.normalDirection()));
 		}
 		byte[] bytes = digest.digest();
 		StringBuilder builder = new StringBuilder(16);
