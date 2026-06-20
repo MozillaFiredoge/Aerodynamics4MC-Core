@@ -8,7 +8,10 @@
     </a>
 > **Aerodynamics4MC** brings a multi‑scale, real‑time wind and weather system to Minecraft. Coarse weather is server‑authoritative, an optional high‑resolution CFD layer runs on the client for visualization, and external mods consume wind through a clean public API without touching internal solver buffers.
 ---
-
+<p align="center">
+  <img src="https://raw.githubusercontent.com/MozillaFiredoge/Aerodynamics4MC-Fabric/main/docs/airfoil_GUI.gif" width="48%" alt="airfoilGUI"/>
+  <img src="https://raw.githubusercontent.com/MozillaFiredoge/Aerodynamics4MC-Fabric/main/docs/flight_test_UI.gif" width="48%" alt="flight test UI"/>
+</p>
 ## 🔌 Wind Sampling API (for Mod Developers)
 
 Other mods consume wind through the standalone `aerodynamics4mc-api` artifact. The API module is Minecraft-free: public signatures use stable `A4mc*` value types instead of Mojang/Yarn classes, so integrations are less sensitive to Minecraft or loader mapping changes.
