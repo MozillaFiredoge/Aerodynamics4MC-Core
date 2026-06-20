@@ -54,7 +54,9 @@ public final class CreateAeronauticsServerNetworking {
 			message(player, "Hold an A4MC Airfoil Wing item before selecting an airfoil.", ChatFormatting.RED);
 			return;
 		}
+		CreateAeronauticsAirfoilLibrary.select(definition.id());
 		AirfoilWingBlockItem.setAirfoilId(stack, definition.id());
+		player.setItemInHand(hand, stack);
 		player.containerMenu.broadcastChanges();
 		message(player, "Airfoil wing item set to " + definition.displayName() + " (" + definition.id() + ")", ChatFormatting.AQUA);
 	}

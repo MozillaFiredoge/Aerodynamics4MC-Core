@@ -19,6 +19,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.block.BaseEntityBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.RenderShape;
@@ -101,6 +102,18 @@ public class AirfoilWingBlock extends BaseEntityBlock implements BlockSubLevelLi
 			wing.setAirfoilId(AirfoilWingBlockItem.airfoilIdOrSelected(stack));
 		}
 	}
+
+	//? >=1.21.11 {
+	@Override
+	protected ItemStack getCloneItemStack(LevelReader level, BlockPos pos, BlockState state, boolean includeData) {
+		return cloneWingStack(super.getCloneItemStack(level, pos, state, includeData), level, pos);
+	}
+	//?} <1.21.11 {
+	/*@Override
+	public ItemStack getCloneItemStack(LevelReader level, BlockPos pos, BlockState state) {
+		return cloneWingStack(super.getCloneItemStack(level, pos, state), level, pos);
+	}
+	*///?}
 
 	//? >=1.21.11 {
 	@Override
@@ -256,6 +269,13 @@ public class AirfoilWingBlock extends BaseEntityBlock implements BlockSubLevelLi
 			}
 		}
 		return null;
+	}
+
+	private static ItemStack cloneWingStack(ItemStack stack, LevelReader level, BlockPos pos) {
+		if (level != null && pos != null && level.getBlockEntity(pos) instanceof AirfoilWingBlockEntity wing) {
+			AirfoilWingBlockItem.setAirfoilId(stack, wing.airfoilId());
+		}
+		return stack;
 	}
 
 	private static double distanceToNeighborCenter(BlockPos pos, Direction direction, Vec3 hitLocation) {

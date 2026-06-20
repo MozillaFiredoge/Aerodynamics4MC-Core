@@ -1,7 +1,11 @@
 package com.aerodynamics4mc.compat.createaeronautics;
 
 import com.aerodynamics4mc.ModTemplate;
+import com.aerodynamics4mc.api.A4mcId;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.lang.reflect.InvocationHandler;
@@ -52,11 +56,20 @@ public final class CreateAeronauticsContraptionMovement {
 		}
 	}
 
-	private static Object isWingAttachedTowards(Class<?> checkResult, BlockState state, Direction direction) {
+	private static Object isWingAttachedTowards(
+			Class<?> checkResult,
+			BlockState state,
+			Level level,
+			BlockPos pos,
+			Direction direction
+	) {
 		if (!(state.getBlock() instanceof AirfoilWingBlock)) {
 			return checkResult(checkResult, "PASS");
 		}
-		return checkResult(checkResult, direction.getAxis() != AirfoilWingBlock.normalDirection(state).getAxis());
+		if (direction.getAxis() == AirfoilWingBlock.normalDirection(state).getAxis()) {
+			return checkResult(checkResult, false);
+		}
+		return checkResult(checkResult, isCompatibleWingNeighbor(state, level, pos, direction));
 	}
 
 	private static Object isWingNotSupportive(Class<?> checkResult, BlockState state, Direction direction) {
@@ -84,6 +97,43 @@ public final class CreateAeronauticsContraptionMovement {
 		return checkResult(checkResult, value ? "SUCCESS" : "FAIL");
 	}
 
+	private static boolean isCompatibleWingNeighbor(BlockState state, Level level, BlockPos pos, Direction direction) {
+		if (level == null || pos == null || direction == null) {
+			return false;
+		}
+		BlockPos neighborPos = pos.relative(direction);
+		BlockState neighborState = level.getBlockState(neighborPos);
+		if (!(neighborState.getBlock() instanceof AirfoilWingBlock)) {
+			return false;
+		}
+		if (AirfoilWingBlock.chordDirection(state) != AirfoilWingBlock.chordDirection(neighborState)) {
+			return false;
+		}
+		if (AirfoilWingBlock.isVertical(state) != AirfoilWingBlock.isVertical(neighborState)) {
+			return false;
+		}
+		AirfoilWingVariant variant = variant(state);
+		if (variant != variant(neighborState)) {
+			return false;
+		}
+		if (variant != AirfoilWingVariant.CUSTOM) {
+			return true;
+		}
+		A4mcId airfoilId = airfoilId(level, pos);
+		return airfoilId != null && airfoilId.equals(airfoilId(level, neighborPos));
+	}
+
+	private static AirfoilWingVariant variant(BlockState state) {
+		return state != null && state.hasProperty(AirfoilWingBlock.VARIANT)
+				? state.getValue(AirfoilWingBlock.VARIANT)
+				: AirfoilWingVariant.NACA_0012;
+	}
+
+	private static A4mcId airfoilId(Level level, BlockPos pos) {
+		BlockEntity blockEntity = level.getBlockEntity(pos);
+		return blockEntity instanceof AirfoilWingBlockEntity wing ? wing.airfoilId() : null;
+	}
+
 	private record AttachedCheckHandler(Class<?> checkResult) implements InvocationHandler {
 		@Override
 		public Object invoke(Object proxy, Method method, Object[] args) {
@@ -91,7 +141,13 @@ public final class CreateAeronauticsContraptionMovement {
 				return handleObjectMethod(proxy, method, args);
 			}
 			if ("isBlockAttachedTowards".equals(method.getName())) {
-				return isWingAttachedTowards(checkResult, (BlockState) args[0], (Direction) args[3]);
+				return isWingAttachedTowards(
+						checkResult,
+						(BlockState) args[0],
+						(Level) args[1],
+						(BlockPos) args[2],
+						(Direction) args[3]
+				);
 			}
 			return CreateAeronauticsContraptionMovement.checkResult(checkResult, "PASS");
 		}

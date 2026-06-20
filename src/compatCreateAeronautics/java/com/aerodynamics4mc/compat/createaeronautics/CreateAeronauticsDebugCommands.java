@@ -21,7 +21,10 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ChunkPos;
 
 import java.io.IOException;
@@ -302,11 +305,30 @@ public final class CreateAeronauticsDebugCommands {
 			return 0;
 		}
 		AeroAirfoilDefinition selected = CreateAeronauticsAirfoilLibrary.selectedDefinition();
+		boolean updatedHeldItem = updateHeldAirfoilWing(source, selected.id());
 		feedback(source, "Create Aeronautics A4MC airfoil selected=" + selected.id()
 				+ " name=\"" + selected.displayName() + "\" "
-				+ profileSummary(selected.profile()));
+				+ profileSummary(selected.profile())
+				+ (updatedHeldItem ? " held_item=updated" : ""));
 		CreateAeronauticsAirfoilSync.broadcast(source.getServer());
 		return 1;
+	}
+
+	private static boolean updateHeldAirfoilWing(CommandSourceStack source, A4mcId id) {
+		Entity entity = source.getEntity();
+		if (!(entity instanceof ServerPlayer player)) {
+			return false;
+		}
+		for (InteractionHand hand : InteractionHand.values()) {
+			ItemStack stack = player.getItemInHand(hand);
+			if (stack.getItem() == CreateAeronauticsCompatBlocks.AIRFOIL_WING.get().asItem()) {
+				AirfoilWingBlockItem.setAirfoilId(stack, id);
+				player.setItemInHand(hand, stack);
+				player.containerMenu.broadcastChanges();
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static int airfoilExport(CommandSourceStack source, String idText) {

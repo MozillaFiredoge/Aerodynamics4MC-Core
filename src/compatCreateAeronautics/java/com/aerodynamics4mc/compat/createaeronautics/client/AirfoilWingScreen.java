@@ -500,6 +500,7 @@ public final class AirfoilWingScreen extends Screen {
 		if (definition == null || player == null) {
 			return;
 		}
+		CreateAeronauticsAirfoilLibrary.select(definition.id());
 		AirfoilWingBlockItem.setAirfoilId(player.getItemInHand(hand), definition.id());
 		ClientServerboundPacketSender.send(CreateAeronauticsAirfoilItemActionPacket.use(
 				hand == InteractionHand.MAIN_HAND,
