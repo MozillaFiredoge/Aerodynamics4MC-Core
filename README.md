@@ -12,6 +12,9 @@
   <img src="https://raw.githubusercontent.com/MozillaFiredoge/Aerodynamics4MC-Fabric/main/docs/airfoil_GUI.gif" width="48%" alt="airfoilGUI"/>
   <img src="https://raw.githubusercontent.com/MozillaFiredoge/Aerodynamics4MC-Fabric/main/docs/flight_test_UI.gif" width="48%" alt="flight test UI"/>
 </p>
+
+---
+
 ## 🔌 Wind Sampling API (for Mod Developers)
 
 Other mods consume wind through the standalone `aerodynamics4mc-api` artifact. The API module is Minecraft-free: public signatures use stable `A4mc*` value types instead of Mojang/Yarn classes, so integrations are less sensitive to Minecraft or loader mapping changes.
