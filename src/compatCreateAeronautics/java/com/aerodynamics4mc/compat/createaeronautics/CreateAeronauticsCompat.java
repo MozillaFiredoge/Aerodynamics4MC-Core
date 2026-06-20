@@ -30,6 +30,7 @@ public final class CreateAeronauticsCompat {
 			);
 			return;
 		}
+		CreateAeronauticsContraptionMovement.register();
 		ModTemplate.LOGGER.info("Create Aeronautics compat initialized");
 	}
 

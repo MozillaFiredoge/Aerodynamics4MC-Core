@@ -9,7 +9,8 @@ public record CreateAeronauticsEnvironment(boolean available, List<String> missi
 			"dev.ryanhcode.sable.sublevel.ServerSubLevel",
 			"dev.ryanhcode.sable.api.physics.handle.RigidBodyHandle",
 			"dev.simulated_team.simulated.Simulated",
-			"dev.eriksonn.aeronautics.Aeronautics"
+			"dev.eriksonn.aeronautics.Aeronautics",
+			"com.simibubi.create.api.contraption.BlockMovementChecks"
 	};
 
 	public CreateAeronauticsEnvironment {
