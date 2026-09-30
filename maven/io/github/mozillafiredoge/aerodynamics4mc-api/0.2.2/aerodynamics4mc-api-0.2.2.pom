@@ -9,7 +9,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>io.github.mozillafiredoge</groupId>
   <artifactId>aerodynamics4mc-api</artifactId>
-  <version>0.2.1</version>
+  <version>0.2.2</version>
   <name>Aerodynamics4MC API</name>
   <description>Stable Minecraft-free wind sampling API for Aerodynamics4MC integrations.</description>
   <url>https://github.com/MozillaFiredoge/Aerodynamics4MC-Fabric</url>
