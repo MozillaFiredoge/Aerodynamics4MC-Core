@@ -13,15 +13,18 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -267,6 +270,95 @@ public final class ClientL2Solver {
     private static final float DX_METERS = 1.0f;
     private static final float ATLAS_VELOCITY_RANGE = 5.6f;
     private static final float ATLAS_PRESSURE_RANGE = 0.03f;
+    private static final int Q_ISO_MAX_POINTS = configuredInt(
+            "a4mc.clientL2.qIsoMaxPoints",
+            "AERO_LBM_CLIENT_L2_Q_ISO_MAX_POINTS",
+            4096,
+            128,
+            65536
+    );
+    private static final int Q_ISO_MAX_TRIANGLES = configuredInt(
+            "a4mc.clientL2.qIsoMaxTriangles",
+            "AERO_LBM_CLIENT_L2_Q_ISO_MAX_TRIANGLES",
+            8192,
+            256,
+            262144
+    );
+    private static final float Q_ISO_AUTO_THRESHOLD_FRACTION = configuredFloat(
+            "a4mc.clientL2.qIsoAutoThresholdFraction",
+            "AERO_LBM_CLIENT_L2_Q_ISO_AUTO_THRESHOLD_FRACTION",
+            0.22f,
+            0.01f,
+            1.0f
+    );
+    private static final float Q_ISO_FIXED_THRESHOLD = configuredFloat(
+            "a4mc.clientL2.qIsoThreshold",
+            "AERO_LBM_CLIENT_L2_Q_ISO_THRESHOLD",
+            0.0f,
+            0.0f,
+            1.0e6f
+    );
+    private static final float Q_ISO_SCALE = configuredFloat(
+            "a4mc.clientL2.qIsoScale",
+            "AERO_LBM_CLIENT_L2_Q_ISO_SCALE",
+            1.0e6f,
+            1.0f,
+            1.0e9f
+    );
+    private static final int Q_ISO_SOLID_REJECT_MAX_CELLS = 8;
+    private static final int Q_ISO_SOLID_REJECT_DEFAULT_CELLS = configuredInt(
+            "a4mc.clientL2.qIsoSolidRejectCells",
+            "AERO_LBM_CLIENT_L2_Q_ISO_SOLID_REJECT_CELLS",
+            0,
+            0,
+            Q_ISO_SOLID_REJECT_MAX_CELLS
+    );
+    static final int DEBUG_Q_SOLVE_DEFAULT_SIZE = 16;
+    static final int DEBUG_Q_SOLVE_MIN_SIZE = 4;
+    static final int DEBUG_Q_SOLVE_MAX_SIZE = 64;
+    static final int DEBUG_Q_SOLVE_DEFAULT_STEPS = 32;
+    static final int DEBUG_Q_SOLVE_MAX_STEPS = 256;
+    static final int DEBUG_Q_LIVE_DEFAULT_STEPS_PER_FRAME = 2;
+    static final int DEBUG_Q_LIVE_MAX_STEPS_PER_FRAME = 32;
+    static final int DEBUG_Q_LIVE_DEFAULT_INTERVAL_TICKS = 4;
+    static final int DEBUG_Q_LIVE_MAX_INTERVAL_TICKS = 100;
+    static final int DEBUG_Q_FINE_DEFAULT_GRID_SIZE = 32;
+    static final int DEBUG_Q_FINE_MIN_GRID_SIZE = 8;
+    static final int DEBUG_Q_FINE_MAX_GRID_SIZE = 64;
+    static final int DEBUG_Q_FINE_DEFAULT_SIZE_BLOCKS = 8;
+    static final int DEBUG_Q_FINE_MIN_SIZE_BLOCKS = 2;
+    static final int DEBUG_Q_FINE_MAX_SIZE_BLOCKS = 32;
+    private static final int DEBUG_Q_MASK_MAX_RENDER_CELLS = 4096;
+    private static final int DEBUG_Q_SOLVE_SAMPLE_STRIDE = 1;
+    private static final float DEBUG_Q_SOLVE_INLET_X = 2.0f;
+    private static final float DEBUG_Q_SOLVE_INLET_Y = 0.0f;
+    private static final float DEBUG_Q_SOLVE_INLET_Z = 0.0f;
+    static final float DEBUG_Q_INLET_NOISE_MAX_AMPLITUDE = 2.0f;
+    private static final float DEBUG_Q_INLET_NOISE_DEFAULT_AMPLITUDE = configuredFloat(
+            "a4mc.clientL2.qInletNoiseAmplitude",
+            "AERO_LBM_CLIENT_L2_Q_INLET_NOISE_AMPLITUDE",
+            0.0f,
+            0.0f,
+            DEBUG_Q_INLET_NOISE_MAX_AMPLITUDE
+    );
+    private static final int[] Q_ISO_CUBE_VERTEX_OFFSETS = {
+            0, 0, 0,
+            1, 0, 0,
+            1, 1, 0,
+            0, 1, 0,
+            0, 0, 1,
+            1, 0, 1,
+            1, 1, 1,
+            0, 1, 1
+    };
+    private static final int[] Q_ISO_TETRAHEDRA = {
+            0, 5, 1, 6,
+            0, 1, 2, 6,
+            0, 2, 3, 6,
+            0, 3, 7, 6,
+            0, 7, 4, 6,
+            0, 4, 5, 6
+    };
     private static final float ZERO_DYNAMIC_MAX_SPEED_EPS_MPS = 0.02f;
     private static final float COARSE_RESEED_MIN_SPEED_MPS = 0.05f;
     private static final float FAST_RESUME_HORIZONTAL_SPEED_MPS = 6.0f;
@@ -331,6 +423,17 @@ public final class ClientL2Solver {
         NONE,
         DELAYED,
         SUBMITTED
+    }
+
+    private enum QIsoDisplayMode {
+        SURFACE("surface"),
+        VOXELS("voxels");
+
+        private final String statusName;
+
+        QIsoDisplayMode(String statusName) {
+            this.statusName = statusName;
+        }
     }
 
     private final AeroVisualizer visualizer;
@@ -425,6 +528,22 @@ public final class ClientL2Solver {
     private long stressSubmittedHeatCells;
     private long stressSubmittedDirtyCells;
     private boolean stressStaticSubmittedForActiveSet;
+    private DebugQIsoLiveRequest debugQIsoLiveRequest;
+    private long debugQIsoLiveLastSubmitGameTime = Long.MIN_VALUE;
+    private boolean debugQIsoLiveStepPending;
+    private float debugQIsoLastThreshold;
+    private float debugQIsoLastMaxQ;
+    private int debugQIsoLastPositiveSamples;
+    private int debugQIsoLastPointCount;
+    private int debugQIsoLastTriangleCount;
+    private volatile float qIsoFixedThreshold = Q_ISO_FIXED_THRESHOLD;
+    private volatile float qIsoAutoThresholdFraction = Q_ISO_AUTO_THRESHOLD_FRACTION;
+    private volatile int qIsoSolidRejectCells = Q_ISO_SOLID_REJECT_DEFAULT_CELLS;
+    private volatile QIsoDisplayMode qIsoDisplayMode = QIsoDisplayMode.SURFACE;
+    private volatile float debugQInletNoiseAmplitude = DEBUG_Q_INLET_NOISE_DEFAULT_AMPLITUDE;
+    private float debugQIsoLastInletVx = DEBUG_Q_SOLVE_INLET_X;
+    private float debugQIsoLastInletVy = DEBUG_Q_SOLVE_INLET_Y;
+    private float debugQIsoLastInletVz = DEBUG_Q_SOLVE_INLET_Z;
 
     ClientL2Solver(AeroVisualizer visualizer) {
         this.visualizer = visualizer;
@@ -482,6 +601,34 @@ public final class ClientL2Solver {
             return clamped;
         } catch (NumberFormatException ignored) {
             LOGGER.warn("Client L2 config {}={} is not an integer; using {}", propertyName, value, defaultValue);
+            return Mth.clamp(defaultValue, min, max);
+        }
+    }
+
+    private static float configuredFloat(String propertyName, String envName, float defaultValue, float min, float max) {
+        String value = System.getProperty(propertyName);
+        if (value == null || value.isBlank()) {
+            value = System.getenv(envName);
+        }
+        if (value == null || value.isBlank()) {
+            return Mth.clamp(defaultValue, min, max);
+        }
+        try {
+            float parsed = Float.parseFloat(value.trim());
+            float clamped = Mth.clamp(parsed, min, max);
+            if (clamped != parsed) {
+                LOGGER.warn(
+                        "Client L2 config {}={} outside [{}, {}]; using {}",
+                        propertyName,
+                        parsed,
+                        min,
+                        max,
+                        clamped
+                );
+            }
+            return clamped;
+        } catch (NumberFormatException ignored) {
+            LOGGER.warn("Client L2 config {}={} is not a float; using {}", propertyName, value, defaultValue);
             return Mth.clamp(defaultValue, min, max);
         }
     }
@@ -564,6 +711,7 @@ public final class ClientL2Solver {
 
     void onClientTick(Minecraft client, BlockPos anchorBlockPos) {
         drainWorkerAtlases();
+        tickDebugQCriterionIsoLive(client == null ? null : client.level);
         if (!experimentalEnabled || !streamingEnabled || client == null || client.level == null || client.player == null || anchorBlockPos == null) {
             return;
         }
@@ -649,7 +797,12 @@ public final class ClientL2Solver {
         }
         boolean publish = lastPublishedClientGameTime == Long.MIN_VALUE
                 || clientGameTime - lastPublishedClientGameTime >= LOCAL_PUBLISH_INTERVAL_TICKS;
-        worker.requestStep(worldKey, publishTargets(dimensionId, publish), MAX_STEPS_PER_CLIENT_TICK);
+        worker.requestStep(
+                worldKey,
+                publishTargets(dimensionId, publish),
+                MAX_STEPS_PER_CLIENT_TICK,
+                publish && visualizer.renderQCriterionIsoEnabled()
+        );
         lastSolveClientGameTime = clientGameTime;
         if (publish) {
             lastPublishedClientGameTime = clientGameTime;
@@ -658,6 +811,770 @@ public final class ClientL2Solver {
 
     void onIdleClientTick() {
         drainWorkerAtlases();
+        Minecraft client = Minecraft.getInstance();
+        tickDebugQCriterionIsoLive(client == null ? null : client.level);
+    }
+
+    String requestDebugQCriterionIsoRegion(ClientLevel world, BlockPos origin, int requestedSize, int requestedSteps) {
+        return requestDebugQCriterionIsoRegion(world, origin, requestedSize, requestedSteps, false);
+    }
+
+    String requestDebugQCriterionIsoRegion(
+            ClientLevel world,
+            BlockPos origin,
+            int requestedSize,
+            int requestedSteps,
+            boolean includeEntities
+    ) {
+        return requestDebugQCriterionIsoRegion(
+                world,
+                origin,
+                requestedSize,
+                requestedSteps,
+                includeEntities,
+                null
+        );
+    }
+
+    String requestDebugQCriterionIsoRegion(
+            ClientLevel world,
+            BlockPos origin,
+            int requestedSize,
+            int requestedSteps,
+            boolean includeEntities,
+            UUID targetEntityId
+    ) {
+        return requestDebugQCriterionIsoRegion(
+                world,
+                origin,
+                requestedSize,
+                requestedSteps,
+                includeEntities,
+                targetEntityId,
+                1.0f
+        );
+    }
+
+    String requestDebugQCriterionIsoRegion(
+            ClientLevel world,
+            BlockPos origin,
+            int requestedSize,
+            int requestedSteps,
+            boolean includeEntities,
+            UUID targetEntityId,
+            float cellSizeBlocks
+    ) {
+        drainWorkerAtlases();
+        if (world == null || origin == null) {
+            return "Client L2 debug Q solve failed: missing client world or origin";
+        }
+        if (!worker.isNativeLoaded()) {
+            return "Client L2 debug Q solve failed: native library not loaded: " + worker.loadError();
+        }
+        DebugRegionSeed seed = buildDebugRegionSeed(
+                world,
+                origin,
+                requestedSize,
+                includeEntities,
+                targetEntityId,
+                cellSizeBlocks
+        );
+        int steps = Mth.clamp(requestedSteps, 1, DEBUG_Q_SOLVE_MAX_STEPS);
+        stopDebugQCriterionIsoLiveRegion(true);
+        resetDebugQIsoStats();
+        DebugInlet inlet = debugQInletForTime(world.getGameTime());
+        rememberDebugQInlet(inlet);
+        visualizer.clearQCriterionIsoFields();
+        showDebugQCriterionSeed(seed);
+        worker.submitDebugRegionSolve(new DebugRegionSolveCommand(
+                worldKey(seed.dimensionId()),
+                seed.dimensionId(),
+                seed.origin(),
+                seed.gridSize(),
+                DEBUG_Q_SOLVE_SAMPLE_STRIDE,
+                steps,
+                seed.solidCells(),
+                seed.cellSizeBlocks(),
+                seed.packedSolidVoxels(),
+                seed.solidMask(),
+                seed.flowState(),
+                inlet.vx(),
+                inlet.vy(),
+                inlet.vz()
+        ));
+        return String.format(
+                java.util.Locale.ROOT,
+                "Queued debug Q solve at %d %d %d cells=%d span=%.2f cellSize=%.3f steps=%d solidCells=%d entityCells=%d entities=%s target=%s inlet=(%.1f, %.1f, %.1f)",
+                seed.origin().getX(),
+                seed.origin().getY(),
+                seed.origin().getZ(),
+                seed.gridSize(),
+                seed.spanBlocks(),
+                seed.cellSizeBlocks(),
+                steps,
+                seed.solidCells(),
+                seed.entityCells(),
+                seed.includeEntities(),
+                formatDebugTarget(seed.targetEntityId()),
+                inlet.vx(),
+                inlet.vy(),
+                inlet.vz()
+        );
+    }
+
+    String requestDebugQCriterionIsoLiveRegion(
+            ClientLevel world,
+            BlockPos origin,
+            int requestedSize,
+            int requestedStepsPerFrame,
+            int requestedIntervalTicks
+    ) {
+        return requestDebugQCriterionIsoLiveRegion(
+                world,
+                origin,
+                requestedSize,
+                requestedStepsPerFrame,
+                requestedIntervalTicks,
+                false
+        );
+    }
+
+    String requestDebugQCriterionIsoLiveRegion(
+            ClientLevel world,
+            BlockPos origin,
+            int requestedSize,
+            int requestedStepsPerFrame,
+            int requestedIntervalTicks,
+            boolean includeEntities
+    ) {
+        return requestDebugQCriterionIsoLiveRegion(
+                world,
+                origin,
+                requestedSize,
+                requestedStepsPerFrame,
+                requestedIntervalTicks,
+                includeEntities,
+                null
+        );
+    }
+
+    String requestDebugQCriterionIsoLiveRegion(
+            ClientLevel world,
+            BlockPos origin,
+            int requestedSize,
+            int requestedStepsPerFrame,
+            int requestedIntervalTicks,
+            boolean includeEntities,
+            UUID targetEntityId
+    ) {
+        return requestDebugQCriterionIsoLiveRegion(
+                world,
+                origin,
+                requestedSize,
+                requestedStepsPerFrame,
+                requestedIntervalTicks,
+                includeEntities,
+                targetEntityId,
+                1.0f
+        );
+    }
+
+    String requestDebugQCriterionIsoLiveRegion(
+            ClientLevel world,
+            BlockPos origin,
+            int requestedSize,
+            int requestedStepsPerFrame,
+            int requestedIntervalTicks,
+            boolean includeEntities,
+            UUID targetEntityId,
+            float cellSizeBlocks
+    ) {
+        drainWorkerAtlases();
+        if (world == null || origin == null) {
+            return "Client L2 debug Q live failed: missing client world or origin";
+        }
+        if (!worker.isNativeLoaded()) {
+            return "Client L2 debug Q live failed: native library not loaded: " + worker.loadError();
+        }
+        DebugRegionSeed seed = buildDebugRegionSeed(
+                world,
+                origin,
+                requestedSize,
+                includeEntities,
+                targetEntityId,
+                cellSizeBlocks
+        );
+        int stepsPerFrame = Mth.clamp(requestedStepsPerFrame, 1, DEBUG_Q_LIVE_MAX_STEPS_PER_FRAME);
+        int intervalTicks = Mth.clamp(requestedIntervalTicks, 1, DEBUG_Q_LIVE_MAX_INTERVAL_TICKS);
+        resetDebugQIsoStats();
+        DebugInlet inlet = debugQInletForTime(world.getGameTime());
+        rememberDebugQInlet(inlet);
+        visualizer.clearQCriterionIsoFields();
+        showDebugQCriterionSeed(seed);
+        debugQIsoLiveRequest = new DebugQIsoLiveRequest(
+                seed.dimensionId(),
+                seed.origin(),
+                seed.gridSize(),
+                seed.solidCells(),
+                seed.entityCells(),
+                seed.includeEntities(),
+                seed.targetEntityId(),
+                seed.cellSizeBlocks(),
+                stepsPerFrame,
+                intervalTicks
+        );
+        debugQIsoLiveLastSubmitGameTime = world.getGameTime();
+        debugQIsoLiveStepPending = true;
+        submitDebugRegionStart(seed, stepsPerFrame, inlet);
+        return String.format(
+                java.util.Locale.ROOT,
+                "Started debug Q live at %d %d %d cells=%d span=%.2f cellSize=%.3f steps/frame=%d intervalTicks=%d solidCells=%d entityCells=%d entities=%s target=%s inlet=(%.1f, %.1f, %.1f)",
+                seed.origin().getX(),
+                seed.origin().getY(),
+                seed.origin().getZ(),
+                seed.gridSize(),
+                seed.spanBlocks(),
+                seed.cellSizeBlocks(),
+                stepsPerFrame,
+                intervalTicks,
+                seed.solidCells(),
+                seed.entityCells(),
+                seed.includeEntities(),
+                formatDebugTarget(seed.targetEntityId()),
+                inlet.vx(),
+                inlet.vy(),
+                inlet.vz()
+        );
+    }
+
+    String stopDebugQCriterionIsoLiveRegion(boolean submitStop) {
+        debugQIsoLiveRequest = null;
+        debugQIsoLiveLastSubmitGameTime = Long.MIN_VALUE;
+        debugQIsoLiveStepPending = false;
+        if (submitStop && worker.isNativeLoaded()) {
+            worker.submitDebugRegionStop();
+        }
+        return "Stopped debug Q live";
+    }
+
+    private void resetDebugQIsoStats() {
+        debugQIsoLastThreshold = 0.0f;
+        debugQIsoLastMaxQ = 0.0f;
+        debugQIsoLastPositiveSamples = 0;
+        debugQIsoLastPointCount = 0;
+        debugQIsoLastTriangleCount = 0;
+    }
+
+    private void showDebugQCriterionSeed(DebugRegionSeed seed) {
+        visualizer.showDebugQCriterionIsoField(
+                seed.dimensionId(),
+                seed.origin(),
+                DEBUG_Q_SOLVE_SAMPLE_STRIDE,
+                seed.gridSize(),
+                new int[0],
+                new float[0],
+                seed.packedSolidVoxels(),
+                seed.cellSizeBlocks(),
+                0.0f,
+                0.0f,
+                seed.solidCells()
+        );
+    }
+
+    private void submitDebugRegionStart(DebugRegionSeed seed, int initialSteps, DebugInlet inlet) {
+        worker.submitDebugRegionStart(new DebugRegionStartCommand(
+                worldKey(seed.dimensionId()),
+                seed.dimensionId(),
+                seed.origin(),
+                seed.gridSize(),
+                DEBUG_Q_SOLVE_SAMPLE_STRIDE,
+                initialSteps,
+                seed.solidCells(),
+                seed.entityCells(),
+                seed.includeEntities(),
+                seed.cellSizeBlocks(),
+                seed.packedSolidVoxels(),
+                seed.solidMask(),
+                seed.flowState(),
+                inlet.vx(),
+                inlet.vy(),
+                inlet.vz()
+        ));
+    }
+
+    private DebugInlet debugQInletForTime(long gameTime) {
+        float amplitude = debugQInletNoiseAmplitude;
+        if (!(amplitude > 0.0f) || !Float.isFinite(amplitude)) {
+            return new DebugInlet(DEBUG_Q_SOLVE_INLET_X, DEBUG_Q_SOLVE_INLET_Y, DEBUG_Q_SOLVE_INLET_Z);
+        }
+        double t = gameTime * 0.11;
+        float vy = (float) (amplitude * (
+                0.72 * Math.sin(t + 0.37)
+                        + 0.28 * Math.sin(t * 1.73 + 2.11)
+        ));
+        float vz = (float) (amplitude * (
+                0.68 * Math.cos(t * 0.91 + 1.19)
+                        + 0.32 * Math.sin(t * 1.41 + 4.23)
+        ));
+        return new DebugInlet(DEBUG_Q_SOLVE_INLET_X, vy, vz);
+    }
+
+    private void rememberDebugQInlet(DebugInlet inlet) {
+        debugQIsoLastInletVx = inlet.vx();
+        debugQIsoLastInletVy = inlet.vy();
+        debugQIsoLastInletVz = inlet.vz();
+    }
+
+    String setDebugQIsoAutoThresholdFraction(float fraction) {
+        if (!Float.isFinite(fraction) || fraction <= 0.0f || fraction > 1.0f) {
+            return "Client L2 debug Q threshold failed: auto fraction must be in (0, 1]";
+        }
+        qIsoFixedThreshold = 0.0f;
+        qIsoAutoThresholdFraction = fraction;
+        return String.format(
+                java.util.Locale.ROOT,
+                "Client L2 debug Q threshold set to auto fraction=%.6g",
+                qIsoAutoThresholdFraction
+        );
+    }
+
+    String setDebugQIsoFixedThreshold(float threshold) {
+        if (!Float.isFinite(threshold) || threshold < 0.0f || threshold > 1.0e6f) {
+            return "Client L2 debug Q threshold failed: fixed threshold must be in [0, 1e6]";
+        }
+        qIsoFixedThreshold = threshold;
+        return threshold > 0.0f
+                ? String.format(
+                        java.util.Locale.ROOT,
+                        "Client L2 debug Q threshold set to fixed=%.6g autoFraction=%.6g",
+                        qIsoFixedThreshold,
+                        qIsoAutoThresholdFraction
+                )
+                : String.format(
+                        java.util.Locale.ROOT,
+                        "Client L2 debug Q threshold set to auto fraction=%.6g",
+                        qIsoAutoThresholdFraction
+                );
+    }
+
+    String resetDebugQIsoThreshold() {
+        qIsoFixedThreshold = Q_ISO_FIXED_THRESHOLD;
+        qIsoAutoThresholdFraction = Q_ISO_AUTO_THRESHOLD_FRACTION;
+        qIsoSolidRejectCells = Q_ISO_SOLID_REJECT_DEFAULT_CELLS;
+        return String.format(
+                java.util.Locale.ROOT,
+                "Client L2 debug Q threshold reset fixed=%.6g autoFraction=%.6g solidRejectCells=%d",
+                qIsoFixedThreshold,
+                qIsoAutoThresholdFraction,
+                qIsoSolidRejectCells
+        );
+    }
+
+    String setDebugQIsoSolidRejectCells(int cells) {
+        qIsoSolidRejectCells = Mth.clamp(cells, 0, Q_ISO_SOLID_REJECT_MAX_CELLS);
+        return String.format(
+                java.util.Locale.ROOT,
+                "Client L2 debug Q solid reject cells=%d",
+                qIsoSolidRejectCells
+        );
+    }
+
+    String setDebugQIsoDisplayMode(String modeName) {
+        QIsoDisplayMode mode = switch (modeName == null ? "" : modeName.trim().toLowerCase(java.util.Locale.ROOT)) {
+            case "surface", "surfaces", "iso", "isosurface", "triangles" -> QIsoDisplayMode.SURFACE;
+            case "voxels", "voxel", "points", "point" -> QIsoDisplayMode.VOXELS;
+            default -> null;
+        };
+        if (mode == null) {
+            return "Client L2 debug Q display failed: expected surface or voxels";
+        }
+        qIsoDisplayMode = mode;
+        resetDebugQIsoStats();
+        visualizer.clearQCriterionIsoFields();
+        return "Client L2 debug Q display=" + mode.statusName;
+    }
+
+    String setDebugQInletNoiseAmplitude(float amplitude) {
+        if (!Float.isFinite(amplitude) || amplitude < 0.0f || amplitude > DEBUG_Q_INLET_NOISE_MAX_AMPLITUDE) {
+            return String.format(
+                    java.util.Locale.ROOT,
+                    "Client L2 debug Q inlet noise failed: amplitude must be in [0, %.1f]",
+                    DEBUG_Q_INLET_NOISE_MAX_AMPLITUDE
+            );
+        }
+        debugQInletNoiseAmplitude = amplitude;
+        return String.format(
+                java.util.Locale.ROOT,
+                "Client L2 debug Q inlet noise amplitude=%.3f",
+                debugQInletNoiseAmplitude
+        );
+    }
+
+    String debugQIsoStatus() {
+        DebugQIsoLiveRequest request = debugQIsoLiveRequest;
+        if (request == null) {
+            return String.format(
+                    java.util.Locale.ROOT,
+                    "debug Q live=off display=%s thresholdMode=%s fixed=%.6g autoFraction=%.6g solidRejectCells=%d inletNoise=%.3f lastInlet=(%.2f, %.2f, %.2f) lastThreshold=%.6g lastMaxQ=%.6g lastPositiveSamples=%d lastPoints=%d lastTriangles=%d worker=%s",
+                    qIsoDisplayMode.statusName,
+                    qIsoFixedThreshold > 0.0f ? "fixed" : "auto",
+                    qIsoFixedThreshold,
+                    qIsoAutoThresholdFraction,
+                    qIsoSolidRejectCells,
+                    debugQInletNoiseAmplitude,
+                    debugQIsoLastInletVx,
+                    debugQIsoLastInletVy,
+                    debugQIsoLastInletVz,
+                    debugQIsoLastThreshold,
+                    debugQIsoLastMaxQ,
+                    debugQIsoLastPositiveSamples,
+                    debugQIsoLastPointCount,
+                    debugQIsoLastTriangleCount,
+                    worker.status()
+            );
+        }
+        return String.format(
+                java.util.Locale.ROOT,
+                "debug Q live=on origin=%d %d %d cells=%d span=%.2f cellSize=%.3f solidCells=%d entityCells=%d entities=%s target=%s steps/frame=%d intervalTicks=%d pending=%s display=%s thresholdMode=%s fixed=%.6g autoFraction=%.6g solidRejectCells=%d inletNoise=%.3f lastInlet=(%.2f, %.2f, %.2f) lastThreshold=%.6g lastMaxQ=%.6g lastPositiveSamples=%d lastPoints=%d lastTriangles=%d worker=%s",
+                request.origin().getX(),
+                request.origin().getY(),
+                request.origin().getZ(),
+                request.gridSize(),
+                request.spanBlocks(),
+                request.cellSizeBlocks(),
+                request.solidCells(),
+                request.entityCells(),
+                request.includeEntities(),
+                formatDebugTarget(request.targetEntityId()),
+                request.stepsPerFrame(),
+                request.intervalTicks(),
+                debugQIsoLiveStepPending,
+                qIsoDisplayMode.statusName,
+                qIsoFixedThreshold > 0.0f ? "fixed" : "auto",
+                qIsoFixedThreshold,
+                qIsoAutoThresholdFraction,
+                qIsoSolidRejectCells,
+                debugQInletNoiseAmplitude,
+                debugQIsoLastInletVx,
+                debugQIsoLastInletVy,
+                debugQIsoLastInletVz,
+                debugQIsoLastThreshold,
+                debugQIsoLastMaxQ,
+                debugQIsoLastPositiveSamples,
+                debugQIsoLastPointCount,
+                debugQIsoLastTriangleCount,
+                worker.status()
+        );
+    }
+
+    private static String formatDebugTarget(UUID targetEntityId) {
+        return targetEntityId == null ? "all" : targetEntityId.toString();
+    }
+
+    private DebugRegionSeed buildDebugRegionSeed(
+            ClientLevel world,
+            BlockPos origin,
+            int requestedSize,
+            boolean includeEntities
+    ) {
+        return buildDebugRegionSeed(world, origin, requestedSize, includeEntities, null);
+    }
+
+    private DebugRegionSeed buildDebugRegionSeed(
+            ClientLevel world,
+            BlockPos origin,
+            int requestedSize,
+            boolean includeEntities,
+            UUID targetEntityId
+    ) {
+        return buildDebugRegionSeed(world, origin, requestedSize, includeEntities, targetEntityId, 1.0f);
+    }
+
+    private DebugRegionSeed buildDebugRegionSeed(
+            ClientLevel world,
+            BlockPos origin,
+            int requestedSize,
+            boolean includeEntities,
+            UUID targetEntityId,
+            float requestedCellSizeBlocks
+    ) {
+        Identifier dimensionId = world.dimension().identifier();
+        BlockPos immutableOrigin = origin.immutable();
+        int gridSize = Mth.clamp(requestedSize, DEBUG_Q_SOLVE_MIN_SIZE, DEBUG_Q_SOLVE_MAX_SIZE);
+        float cellSizeBlocks = Mth.clamp(
+                Float.isFinite(requestedCellSizeBlocks) ? requestedCellSizeBlocks : 1.0f,
+                0.03125f,
+                4.0f
+        );
+        int cells = gridSize * gridSize * gridSize;
+        byte[] solidMask = new byte[cells];
+        float[] initialFlowState = new float[cells * FLOW_CHANNELS];
+        int[] packedSolidVoxels = new int[Math.min(cells, DEBUG_Q_MASK_MAX_RENDER_CELLS)];
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        int solidCells = 0;
+        int writtenSolidVoxels = 0;
+        for (int x = 0; x < gridSize; x++) {
+            for (int y = 0; y < gridSize; y++) {
+                for (int z = 0; z < gridSize; z++) {
+                    cursor.set(
+                            (int) Math.floor(immutableOrigin.getX() + (x + 0.5f) * cellSizeBlocks),
+                            (int) Math.floor(immutableOrigin.getY() + (y + 0.5f) * cellSizeBlocks),
+                            (int) Math.floor(immutableOrigin.getZ() + (z + 0.5f) * cellSizeBlocks)
+                    );
+                    int cell = cellIndex(gridSize, x, y, z);
+                    if (isSolidObstacle(world, cursor, world.getBlockState(cursor))) {
+                        solidMask[cell] = 1;
+                        solidCells++;
+                        if (writtenSolidVoxels < packedSolidVoxels.length) {
+                            packedSolidVoxels[writtenSolidVoxels++] = packDebugVoxel(x, y, z);
+                        }
+                        continue;
+                    }
+                    int base = cell * FLOW_CHANNELS;
+                    initialFlowState[base] = DEBUG_Q_SOLVE_INLET_X;
+                    initialFlowState[base + 1] = DEBUG_Q_SOLVE_INLET_Y;
+                    initialFlowState[base + 2] = DEBUG_Q_SOLVE_INLET_Z;
+                    initialFlowState[base + 3] = 0.0f;
+                }
+            }
+        }
+        DebugEntityVoxelizeResult entityVoxelize = includeEntities
+                ? voxelizeDebugRegionEntities(
+                        world,
+                        immutableOrigin,
+                        gridSize,
+                        cellSizeBlocks,
+                        solidMask,
+                        initialFlowState,
+                        packedSolidVoxels,
+                        writtenSolidVoxels,
+                        targetEntityId
+                )
+                : new DebugEntityVoxelizeResult(0, writtenSolidVoxels);
+        solidCells += entityVoxelize.entityCells();
+        int entityCells = entityVoxelize.entityCells();
+        writtenSolidVoxels = entityVoxelize.writtenSolidVoxels();
+        if (writtenSolidVoxels < packedSolidVoxels.length) {
+            packedSolidVoxels = java.util.Arrays.copyOf(packedSolidVoxels, writtenSolidVoxels);
+        }
+        return new DebugRegionSeed(
+                dimensionId,
+                immutableOrigin,
+                gridSize,
+                solidCells,
+                entityCells,
+                includeEntities,
+                targetEntityId,
+                cellSizeBlocks,
+                packedSolidVoxels,
+                solidMask,
+                initialFlowState
+        );
+    }
+
+    private DebugEntityVoxelizeResult voxelizeDebugRegionEntities(
+            ClientLevel world,
+            BlockPos origin,
+            int gridSize,
+            float cellSizeBlocks,
+            byte[] solidMask,
+            float[] initialFlowState,
+            int[] packedSolidVoxels,
+            int writtenSolidVoxels,
+            UUID targetEntityId
+    ) {
+        AABB regionBox = new AABB(
+                origin.getX(),
+                origin.getY(),
+                origin.getZ(),
+                origin.getX() + gridSize * cellSizeBlocks,
+                origin.getY() + gridSize * cellSizeBlocks,
+                origin.getZ() + gridSize * cellSizeBlocks
+        );
+        Minecraft client = Minecraft.getInstance();
+        Entity localPlayer = client == null ? null : client.player;
+        int entityCells = 0;
+        for (Entity entity : world.getEntities(
+                (Entity) null,
+                regionBox,
+                candidate -> candidate != localPlayer
+                        && !candidate.isRemoved()
+                        && !candidate.isSpectator()
+                        && (targetEntityId == null || targetEntityId.equals(candidate.getUUID()))
+        )) {
+            AABB box = entity.getBoundingBox();
+            double minX = Math.max(box.minX, regionBox.minX);
+            double minY = Math.max(box.minY, regionBox.minY);
+            double minZ = Math.max(box.minZ, regionBox.minZ);
+            double maxX = Math.min(box.maxX, regionBox.maxX);
+            double maxY = Math.min(box.maxY, regionBox.maxY);
+            double maxZ = Math.min(box.maxZ, regionBox.maxZ);
+            if (!(maxX > minX) || !(maxY > minY) || !(maxZ > minZ)) {
+                continue;
+            }
+            int x0 = Mth.clamp((int) Math.floor((minX - origin.getX()) / cellSizeBlocks), 0, gridSize - 1);
+            int y0 = Mth.clamp((int) Math.floor((minY - origin.getY()) / cellSizeBlocks), 0, gridSize - 1);
+            int z0 = Mth.clamp((int) Math.floor((minZ - origin.getZ()) / cellSizeBlocks), 0, gridSize - 1);
+            int x1 = Mth.clamp((int) Math.ceil((maxX - origin.getX()) / cellSizeBlocks) - 1, 0, gridSize - 1);
+            int y1 = Mth.clamp((int) Math.ceil((maxY - origin.getY()) / cellSizeBlocks) - 1, 0, gridSize - 1);
+            int z1 = Mth.clamp((int) Math.ceil((maxZ - origin.getZ()) / cellSizeBlocks) - 1, 0, gridSize - 1);
+            for (int x = x0; x <= x1; x++) {
+                for (int y = y0; y <= y1; y++) {
+                    for (int z = z0; z <= z1; z++) {
+                        int cell = cellIndex(gridSize, x, y, z);
+                        if (solidMask[cell] != 0) {
+                            continue;
+                        }
+                        solidMask[cell] = 1;
+                        entityCells++;
+                        int base = cell * FLOW_CHANNELS;
+                        initialFlowState[base] = 0.0f;
+                        initialFlowState[base + 1] = 0.0f;
+                        initialFlowState[base + 2] = 0.0f;
+                        initialFlowState[base + 3] = 0.0f;
+                        if (writtenSolidVoxels < packedSolidVoxels.length) {
+                            packedSolidVoxels[writtenSolidVoxels++] = packDebugVoxel(x, y, z);
+                        }
+                    }
+                }
+            }
+        }
+        return new DebugEntityVoxelizeResult(entityCells, writtenSolidVoxels);
+    }
+
+    private Entity findDebugQIsoTargetEntity(ClientLevel world, DebugQIsoLiveRequest request) {
+        UUID targetEntityId = request.targetEntityId();
+        if (targetEntityId == null) {
+            return null;
+        }
+        float spanBlocks = request.spanBlocks();
+        double expand = Math.max(16.0, spanBlocks * 2.0);
+        BlockPos origin = request.origin();
+        AABB searchBox = new AABB(
+                origin.getX() - expand,
+                origin.getY() - expand,
+                origin.getZ() - expand,
+                origin.getX() + spanBlocks + expand,
+                origin.getY() + spanBlocks + expand,
+                origin.getZ() + spanBlocks + expand
+        );
+        for (Entity candidate : world.getEntities(
+                (Entity) null,
+                searchBox,
+                entity -> targetEntityId.equals(entity.getUUID()) && !entity.isRemoved() && !entity.isSpectator()
+        )) {
+            return candidate;
+        }
+        return null;
+    }
+
+    private boolean shouldRecenterDebugQIso(DebugQIsoLiveRequest request, Entity targetEntity) {
+        float spanBlocks = request.spanBlocks();
+        BlockPos origin = request.origin();
+        double patchCenterX = origin.getX() + spanBlocks * 0.5;
+        double patchCenterY = origin.getY() + spanBlocks * 0.5;
+        double patchCenterZ = origin.getZ() + spanBlocks * 0.5;
+        AABB targetBox = targetEntity.getBoundingBox();
+        double targetCenterX = (targetBox.minX + targetBox.maxX) * 0.5;
+        double targetCenterY = (targetBox.minY + targetBox.maxY) * 0.5;
+        double targetCenterZ = (targetBox.minZ + targetBox.maxZ) * 0.5;
+        double dx = targetCenterX - patchCenterX;
+        double dy = targetCenterY - patchCenterY;
+        double dz = targetCenterZ - patchCenterZ;
+        double threshold = Math.max(1.0, spanBlocks * 0.25);
+        return dx * dx + dy * dy + dz * dz > threshold * threshold;
+    }
+
+    private BlockPos centeredDebugRegionOrigin(Entity entity, float spanBlocks) {
+        AABB targetBox = entity.getBoundingBox();
+        double halfSpan = spanBlocks * 0.5;
+        return new BlockPos(
+                (int) Math.floor((targetBox.minX + targetBox.maxX) * 0.5 - halfSpan),
+                (int) Math.floor((targetBox.minY + targetBox.maxY) * 0.5 - halfSpan),
+                (int) Math.floor((targetBox.minZ + targetBox.maxZ) * 0.5 - halfSpan)
+        );
+    }
+
+    private void tickDebugQCriterionIsoLive(ClientLevel world) {
+        DebugQIsoLiveRequest request = debugQIsoLiveRequest;
+        if (request == null || world == null || debugQIsoLiveStepPending) {
+            return;
+        }
+        if (!request.dimensionId().equals(world.dimension().identifier())) {
+            return;
+        }
+        long gameTime = world.getGameTime();
+        if (debugQIsoLiveLastSubmitGameTime != Long.MIN_VALUE
+                && gameTime - debugQIsoLiveLastSubmitGameTime < request.intervalTicks()) {
+            return;
+        }
+        DebugRegionSeed refreshedSeed = null;
+        boolean restartSolver = false;
+        DebugInlet inlet = debugQInletForTime(gameTime);
+        rememberDebugQInlet(inlet);
+        if (request.includeEntities()) {
+            BlockPos refreshOrigin = request.origin();
+            Entity targetEntity = findDebugQIsoTargetEntity(world, request);
+            if (targetEntity != null && shouldRecenterDebugQIso(request, targetEntity)) {
+                refreshOrigin = centeredDebugRegionOrigin(targetEntity, request.spanBlocks());
+                restartSolver = true;
+            }
+            refreshedSeed = buildDebugRegionSeed(
+                    world,
+                    refreshOrigin,
+                    request.gridSize(),
+                    true,
+                    request.targetEntityId(),
+                    request.cellSizeBlocks()
+            );
+            debugQIsoLiveRequest = new DebugQIsoLiveRequest(
+                    refreshedSeed.dimensionId(),
+                    refreshedSeed.origin(),
+                    refreshedSeed.gridSize(),
+                    refreshedSeed.solidCells(),
+                    refreshedSeed.entityCells(),
+                    true,
+                    refreshedSeed.targetEntityId(),
+                    refreshedSeed.cellSizeBlocks(),
+                    request.stepsPerFrame(),
+                    request.intervalTicks()
+            );
+        }
+        debugQIsoLiveLastSubmitGameTime = gameTime;
+        debugQIsoLiveStepPending = true;
+        if (restartSolver && refreshedSeed != null) {
+            visualizer.clearQCriterionIsoFields();
+            showDebugQCriterionSeed(refreshedSeed);
+            submitDebugRegionStart(refreshedSeed, request.stepsPerFrame(), inlet);
+            return;
+        }
+        if (refreshedSeed == null) {
+            worker.submitDebugRegionStep(new DebugRegionStepCommand(
+                    request.stepsPerFrame(),
+                    request.solidCells(),
+                    request.entityCells(),
+                    request.includeEntities(),
+                    request.cellSizeBlocks(),
+                    new int[0],
+                    null,
+                    inlet.vx(),
+                    inlet.vy(),
+                    inlet.vz()
+            ));
+            return;
+        }
+        worker.submitDebugRegionStep(new DebugRegionStepCommand(
+                request.stepsPerFrame(),
+                refreshedSeed.solidCells(),
+                refreshedSeed.entityCells(),
+                refreshedSeed.includeEntities(),
+                refreshedSeed.cellSizeBlocks(),
+                refreshedSeed.packedSolidVoxels(),
+                refreshedSeed.solidMask(),
+                inlet.vx(),
+                inlet.vy(),
+                inlet.vz()
+        ));
     }
 
     private void drainWorkerAtlases() {
@@ -669,6 +1586,42 @@ public final class ClientL2Solver {
                     snapshot.sampleStride(),
                     snapshot.packedFlow()
             );
+        }
+        LocalQIsoSnapshot qSnapshot;
+        while ((qSnapshot = worker.pollQIso()) != null) {
+            if (qSnapshot.debug()) {
+                debugQIsoLiveStepPending = false;
+                debugQIsoLastThreshold = qSnapshot.threshold();
+                debugQIsoLastMaxQ = qSnapshot.maxQ();
+                debugQIsoLastPositiveSamples = qSnapshot.positiveSamples();
+                debugQIsoLastPointCount = qSnapshot.packedPoints().length;
+                debugQIsoLastTriangleCount = qSnapshot.triangleVertices().length / 9;
+                visualizer.showDebugQCriterionIsoField(
+                        qSnapshot.dimensionId(),
+                        qSnapshot.origin(),
+                        qSnapshot.sampleStride(),
+                        qSnapshot.atlasResolution(),
+                        qSnapshot.packedPoints(),
+                        qSnapshot.triangleVertices(),
+                        qSnapshot.packedSolidVoxels(),
+                        qSnapshot.cellSizeBlocks(),
+                        qSnapshot.threshold(),
+                        qSnapshot.maxQ(),
+                        qSnapshot.positiveSamples()
+                );
+            } else {
+                visualizer.onLocalQCriterionIsoField(
+                        qSnapshot.dimensionId(),
+                        qSnapshot.origin(),
+                        qSnapshot.sampleStride(),
+                        qSnapshot.atlasResolution(),
+                        qSnapshot.packedPoints(),
+                        qSnapshot.triangleVertices(),
+                        qSnapshot.threshold(),
+                        qSnapshot.maxQ(),
+                        qSnapshot.positiveSamples()
+                );
+            }
         }
     }
 
@@ -2126,7 +3079,17 @@ public final class ClientL2Solver {
     }
 
     private int cellIndex(int x, int y, int z) {
-        return (x * BRICK_SIZE + y) * BRICK_SIZE + z;
+        return cellIndex(BRICK_SIZE, x, y, z);
+    }
+
+    private static int cellIndex(int gridSize, int x, int y, int z) {
+        return (x * gridSize + y) * gridSize + z;
+    }
+
+    private static int packDebugVoxel(int x, int y, int z) {
+        return (x & 0xFF)
+                | ((y & 0xFF) << 8)
+                | ((z & 0xFF) << 16);
     }
 
     private long worldKey(Identifier dimensionId) {
@@ -2237,6 +3200,61 @@ public final class ClientL2Solver {
     ) implements WorkerCommand {
     }
 
+    private record DebugRegionSolveCommand(
+            long worldKey,
+            Identifier dimensionId,
+            BlockPos origin,
+            int gridSize,
+            int sampleStride,
+            int steps,
+            int solidCells,
+            float cellSizeBlocks,
+            int[] packedSolidVoxels,
+            byte[] obstacle,
+            float[] flowState,
+            float inletVx,
+            float inletVy,
+            float inletVz
+    ) implements WorkerCommand {
+    }
+
+    private record DebugRegionStartCommand(
+            long worldKey,
+            Identifier dimensionId,
+            BlockPos origin,
+            int gridSize,
+            int sampleStride,
+            int initialSteps,
+            int solidCells,
+            int entityCells,
+            boolean includeEntities,
+            float cellSizeBlocks,
+            int[] packedSolidVoxels,
+            byte[] obstacle,
+            float[] flowState,
+            float inletVx,
+            float inletVy,
+            float inletVz
+    ) implements WorkerCommand {
+    }
+
+    private record DebugRegionStepCommand(
+            int steps,
+            int solidCells,
+            int entityCells,
+            boolean includeEntities,
+            float cellSizeBlocks,
+            int[] packedSolidVoxels,
+            byte[] obstacle,
+            float inletVx,
+            float inletVy,
+            float inletVz
+    ) implements WorkerCommand {
+    }
+
+    private record DebugRegionStopCommand() implements WorkerCommand {
+    }
+
     private record BoundaryReferenceCommand(
             long worldKey,
             int brickX,
@@ -2247,7 +3265,12 @@ public final class ClientL2Solver {
     ) implements WorkerCommand {
     }
 
-    private record StepCommand(long worldKey, PublishTarget[] publishTargets, int stepCount) implements WorkerCommand {
+    private record StepCommand(
+            long worldKey,
+            PublishTarget[] publishTargets,
+            int stepCount,
+            boolean publishQIso
+    ) implements WorkerCommand {
     }
 
     private record ResetCommand() implements WorkerCommand {
@@ -2262,10 +3285,70 @@ public final class ClientL2Solver {
     private record LocalAtlasSnapshot(Identifier dimensionId, BlockPos origin, int sampleStride, short[] packedFlow) {
     }
 
+    private record LocalQIsoSnapshot(
+            Identifier dimensionId,
+            BlockPos origin,
+            int sampleStride,
+            int atlasResolution,
+            int[] packedPoints,
+            float[] triangleVertices,
+            int[] packedSolidVoxels,
+            float cellSizeBlocks,
+            float threshold,
+            float maxQ,
+            int positiveSamples,
+            boolean debug
+    ) {
+    }
+
     private record WorkerSolverKey(long worldKey, int brickX, int brickY, int brickZ) {
     }
 
     private record FlowBoundary(float vx, float vy, float vz) {
+    }
+
+    private record DebugInlet(float vx, float vy, float vz) {
+    }
+
+    private record QField(float[] values, float maxQ, int positiveSamples) {
+    }
+
+    private record DebugRegionSeed(
+            Identifier dimensionId,
+            BlockPos origin,
+            int gridSize,
+            int solidCells,
+            int entityCells,
+            boolean includeEntities,
+            UUID targetEntityId,
+            float cellSizeBlocks,
+            int[] packedSolidVoxels,
+            byte[] solidMask,
+            float[] flowState
+    ) {
+        float spanBlocks() {
+            return gridSize * cellSizeBlocks;
+        }
+    }
+
+    private record DebugEntityVoxelizeResult(int entityCells, int writtenSolidVoxels) {
+    }
+
+    private record DebugQIsoLiveRequest(
+            Identifier dimensionId,
+            BlockPos origin,
+            int gridSize,
+            int solidCells,
+            int entityCells,
+            boolean includeEntities,
+            UUID targetEntityId,
+            float cellSizeBlocks,
+            int stepsPerFrame,
+            int intervalTicks
+    ) {
+        float spanBlocks() {
+            return gridSize * cellSizeBlocks;
+        }
     }
 
     private static final class WorkerSolver {
@@ -2282,6 +3365,62 @@ public final class ClientL2Solver {
         }
     }
 
+    private static final class DebugRegionSolver {
+        private final long handle;
+        private final long worldKey;
+        private final Identifier dimensionId;
+        private final BlockPos origin;
+        private final int gridSize;
+        private final int sampleStride;
+        private int solidCells;
+        private int entityCells;
+        private boolean includeEntities;
+        private float cellSizeBlocks;
+        private int[] packedSolidVoxels;
+        private byte[] solidMask;
+        private float inletVx;
+        private float inletVy;
+        private float inletVz;
+
+        private DebugRegionSolver(
+                long handle,
+                long worldKey,
+                Identifier dimensionId,
+                BlockPos origin,
+                int gridSize,
+                int sampleStride,
+                int solidCells,
+                int entityCells,
+                boolean includeEntities,
+                float cellSizeBlocks,
+                int[] packedSolidVoxels,
+                byte[] solidMask,
+                float inletVx,
+                float inletVy,
+                float inletVz
+        ) {
+            this.handle = handle;
+            this.worldKey = worldKey;
+            this.dimensionId = dimensionId;
+            this.origin = origin;
+            this.gridSize = gridSize;
+            this.sampleStride = sampleStride;
+            this.solidCells = solidCells;
+            this.entityCells = entityCells;
+            this.includeEntities = includeEntities;
+            this.cellSizeBlocks = cellSizeBlocks;
+            this.packedSolidVoxels = packedSolidVoxels == null
+                    ? new int[0]
+                    : java.util.Arrays.copyOf(packedSolidVoxels, packedSolidVoxels.length);
+            this.solidMask = solidMask == null
+                    ? new byte[0]
+                    : java.util.Arrays.copyOf(solidMask, solidMask.length);
+            this.inletVx = inletVx;
+            this.inletVy = inletVy;
+            this.inletVz = inletVz;
+        }
+    }
+
     private record WorkerDeltaKey(int type, int x, int y, int z, int data0) {
         static WorkerDeltaKey of(NativeSimulationBridge.WorldDelta delta) {
             return new WorkerDeltaKey(delta.type(), delta.x(), delta.y(), delta.z(), delta.data0());
@@ -2292,15 +3431,21 @@ public final class ClientL2Solver {
         private final NativeSimulationBridge bridge = new NativeSimulationBridge();
         private final BlockingQueue<WorkerCommand> commands = new ArrayBlockingQueue<>(WORKER_QUEUE_CAPACITY);
         private final ConcurrentLinkedQueue<LocalAtlasSnapshot> atlases = new ConcurrentLinkedQueue<>();
+        private final ConcurrentLinkedQueue<LocalQIsoSnapshot> qIsoSnapshots = new ConcurrentLinkedQueue<>();
         private final LinkedHashMap<WorkerSolverKey, WorkerSolver> solvers = new LinkedHashMap<>();
+        private DebugRegionSolver debugRegionSolver;
         private volatile boolean running;
         private volatile String lastError = "-";
         private volatile String lastRuntimeInfo = "-";
         private volatile long processedCommands;
         private volatile long droppedCommands;
         private volatile long publishedAtlases;
+        private volatile long publishedQIsoSnapshots;
+        private volatile long nativeQIsoSnapshots;
+        private volatile long fallbackQIsoSnapshots;
         private volatile long lastStepNanos;
         private volatile long lastPublishNanos;
+        private volatile long lastQIsoNanos;
         private Thread thread;
 
         boolean isNativeLoaded() {
@@ -2323,16 +3468,36 @@ public final class ClientL2Solver {
             offer(command);
         }
 
+        void submitDebugRegionSolve(DebugRegionSolveCommand command) {
+            offer(command);
+        }
+
+        void submitDebugRegionStart(DebugRegionStartCommand command) {
+            offer(command);
+        }
+
+        void submitDebugRegionStep(DebugRegionStepCommand command) {
+            offer(command);
+        }
+
+        void submitDebugRegionStop() {
+            offer(new DebugRegionStopCommand());
+        }
+
         void submitBoundaryReference(BoundaryReferenceCommand command) {
             offer(command);
         }
 
-        void requestStep(long worldKey, PublishTarget[] publishTargets, int stepCount) {
-            offer(new StepCommand(worldKey, publishTargets, stepCount));
+        void requestStep(long worldKey, PublishTarget[] publishTargets, int stepCount, boolean publishQIso) {
+            offer(new StepCommand(worldKey, publishTargets, stepCount, publishQIso));
         }
 
         LocalAtlasSnapshot pollAtlas() {
             return atlases.poll();
+        }
+
+        LocalQIsoSnapshot pollQIso() {
+            return qIsoSnapshots.poll();
         }
 
         int queueSize() {
@@ -2342,6 +3507,7 @@ public final class ClientL2Solver {
         void reset() {
             commands.clear();
             atlases.clear();
+            qIsoSnapshots.clear();
             if (running) {
                 offer(new ResetCommand());
             }
@@ -2350,6 +3516,7 @@ public final class ClientL2Solver {
         void close() {
             commands.clear();
             atlases.clear();
+            qIsoSnapshots.clear();
             if (!running) {
                 releaseService();
                 return;
@@ -2361,14 +3528,31 @@ public final class ClientL2Solver {
             return "running=" + running
                     + ",queue=" + commands.size()
                     + ",atlases=" + atlases.size()
+                    + ",qIso=" + qIsoSnapshots.size()
                     + ",processed=" + processedCommands
                     + ",dropped=" + droppedCommands
                     + ",published=" + publishedAtlases
+                    + ",publishedQIso=" + publishedQIsoSnapshots
+                    + ",nativeQIso=" + nativeQIsoSnapshots
+                    + ",fallbackQIso=" + fallbackQIsoSnapshots
                     + ",lastStepMs=" + formatMillis(lastStepNanos)
                     + ",lastPublishMs=" + formatMillis(lastPublishNanos)
+                    + ",lastQIsoMs=" + formatMillis(lastQIsoNanos)
                     + ",solvers=" + solvers.size()
+                    + ",debugLive=" + debugRegionStatus()
                     + ",runtime=" + lastRuntimeInfo
                     + ",error=" + lastError;
+        }
+
+        private String debugRegionStatus() {
+            DebugRegionSolver solver = debugRegionSolver;
+            if (solver == null) {
+                return "false";
+            }
+            return "true:solidCells=" + solver.solidCells
+                    + ":entityCells=" + solver.entityCells
+                    + ":entities=" + solver.includeEntities
+                    + ":cellSize=" + String.format(java.util.Locale.ROOT, "%.3f", solver.cellSizeBlocks);
         }
 
         private void offer(WorkerCommand command) {
@@ -2379,10 +3563,13 @@ public final class ClientL2Solver {
             startIfNeeded();
             if (command instanceof StepCommand) {
                 droppedCommands += removeQueuedStepCommands();
+            } else if (command instanceof DebugRegionStepCommand) {
+                droppedCommands += removeQueuedDebugRegionStepCommands();
             } else if (command instanceof WorldDeltasCommand worldDeltas) {
                 command = coalesceQueuedWorldDeltas(worldDeltas);
             } else if (isPriorityCommand(command)) {
                 droppedCommands += removeQueuedStepCommands();
+                droppedCommands += removeQueuedDebugRegionStepCommands();
             }
             if (!commands.offer(command)) {
                 if (command instanceof StepCommand) {
@@ -2401,6 +3588,9 @@ public final class ClientL2Solver {
             return command instanceof ActiveHintsCommand
                     || command instanceof WorldDeltasCommand
                     || command instanceof BrickSeedCommand
+                    || command instanceof DebugRegionSolveCommand
+                    || command instanceof DebugRegionStartCommand
+                    || command instanceof DebugRegionStopCommand
                     || command instanceof BoundaryReferenceCommand
                     || command instanceof ResetCommand
                     || command instanceof CloseCommand;
@@ -2475,6 +3665,16 @@ public final class ClientL2Solver {
             return false;
         }
 
+        private int removeQueuedDebugRegionStepCommands() {
+            int removed = 0;
+            for (WorkerCommand queued : commands.toArray(new WorkerCommand[0])) {
+                if (queued instanceof DebugRegionStepCommand && commands.remove(queued)) {
+                    removed++;
+                }
+            }
+            return removed;
+        }
+
         private void startIfNeeded() {
             if (running) {
                 return;
@@ -2502,6 +3702,14 @@ public final class ClientL2Solver {
                         handleWorldDeltas(worldDeltas);
                     } else if (command instanceof BrickSeedCommand brickSeed) {
                         handleBrickSeed(brickSeed);
+                    } else if (command instanceof DebugRegionSolveCommand debugRegionSolve) {
+                        handleDebugRegionSolve(debugRegionSolve);
+                    } else if (command instanceof DebugRegionStartCommand debugRegionStart) {
+                        handleDebugRegionStart(debugRegionStart);
+                    } else if (command instanceof DebugRegionStepCommand debugRegionStep) {
+                        handleDebugRegionStep(debugRegionStep);
+                    } else if (command instanceof DebugRegionStopCommand) {
+                        handleDebugRegionStop();
                     } else if (command instanceof BoundaryReferenceCommand boundaryReference) {
                         handleBoundaryReference(boundaryReference);
                     } else if (command instanceof StepCommand step) {
@@ -2522,6 +3730,8 @@ public final class ClientL2Solver {
         private void handleReset() {
             releaseService();
             atlases.clear();
+            qIsoSnapshots.clear();
+            debugRegionSolver = null;
             lastRuntimeInfo = "-";
             lastError = "-";
         }
@@ -2592,6 +3802,291 @@ public final class ClientL2Solver {
             lastRuntimeInfo = bridge.runtimeInfo();
         }
 
+        private void handleDebugRegionSolve(DebugRegionSolveCommand command) {
+            if (!ensureRuntime(command.worldKey())) {
+                return;
+            }
+            int gridSize = Mth.clamp(command.gridSize(), DEBUG_Q_SOLVE_MIN_SIZE, DEBUG_Q_SOLVE_MAX_SIZE);
+            int sampleStride = Math.max(1, command.sampleStride());
+            int cells = gridSize * gridSize * gridSize;
+            if (command.obstacle() == null
+                    || command.obstacle().length != cells
+                    || command.flowState() == null
+                    || command.flowState().length != cells * FLOW_CHANNELS) {
+                lastError = "debug Q solve failed: invalid solid mask or flow state";
+                return;
+            }
+            long handle = 0L;
+            try {
+                handle = bridge.createWindTunnelSolver(
+                        gridSize,
+                        gridSize,
+                        gridSize,
+                        command.cellSizeBlocks(),
+                        DT_SECONDS
+                );
+                if (handle == 0L) {
+                    lastError = "debug createWindTunnelSolver failed: " + bridge.windTunnelLastError();
+                    return;
+                }
+                if (!bridge.setWindTunnelSolidMask(
+                        handle,
+                        gridSize,
+                        gridSize,
+                        gridSize,
+                        command.obstacle()
+                )) {
+                    lastError = "debug setWindTunnelSolidMask failed: " + bridge.windTunnelLastError();
+                    return;
+                }
+                if (!bridge.setWindTunnelFlowState(
+                        handle,
+                        gridSize,
+                        gridSize,
+                        gridSize,
+                        command.flowState()
+                )) {
+                    lastError = "debug setWindTunnelFlowState failed: " + bridge.windTunnelLastError();
+                    return;
+                }
+                long stepStart = System.nanoTime();
+                if (!bridge.advanceWindTunnel(
+                        handle,
+                        Math.max(1, command.steps()),
+                        command.inletVx(),
+                        command.inletVy(),
+                        command.inletVz(),
+                        AerodynamicSolver.DEFAULT_AIR_DENSITY_KG_M3,
+                        AerodynamicSolver.DEFAULT_AIR_KINEMATIC_VISCOSITY_M2_S
+                )) {
+                    lastError = "debug advanceWindTunnel failed: " + bridge.windTunnelLastError();
+                    return;
+                }
+                lastStepNanos = System.nanoTime() - stepStart;
+
+                PublishTarget target = new PublishTarget(command.dimensionId(), command.origin(), 0, 0, 0);
+                long qStart = System.nanoTime();
+                LocalQIsoSnapshot qSnapshot = buildNativeQIsoSnapshot(
+                        handle,
+                        target,
+                        gridSize,
+                        sampleStride,
+                        command.cellSizeBlocks(),
+                        true
+                );
+                if (qSnapshot == null) {
+                    float[] flowAtlas = new float[packedValueCount(gridSize, sampleStride)];
+                    if (!bridge.extractWindTunnelFlowAtlas(
+                            handle,
+                            gridSize,
+                            gridSize,
+                            gridSize,
+                            sampleStride,
+                            flowAtlas
+                    )) {
+                        lastError = "debug extractWindTunnelFlowAtlas failed: " + bridge.windTunnelLastError();
+                        return;
+                    }
+                    qSnapshot = buildQIsoSnapshot(
+                            target,
+                            gridSize,
+                            sampleStride,
+                            command.cellSizeBlocks(),
+                            flowAtlas,
+                            true
+                    );
+                    fallbackQIsoSnapshots++;
+                } else {
+                    nativeQIsoSnapshots++;
+                }
+                qSnapshot = withDebugSolidMask(qSnapshot, command.packedSolidVoxels(), command.obstacle());
+                lastQIsoNanos = System.nanoTime() - qStart;
+                qIsoSnapshots.offer(qSnapshot);
+                publishedQIsoSnapshots++;
+                lastRuntimeInfo = bridge.runtimeInfo();
+                lastError = "-";
+            } finally {
+                if (handle != 0L) {
+                    bridge.destroyWindTunnelSolver(handle);
+                }
+            }
+        }
+
+        private void handleDebugRegionStart(DebugRegionStartCommand command) {
+            if (!ensureRuntime(command.worldKey())) {
+                return;
+            }
+            int gridSize = Mth.clamp(command.gridSize(), DEBUG_Q_SOLVE_MIN_SIZE, DEBUG_Q_SOLVE_MAX_SIZE);
+            int sampleStride = Math.max(1, command.sampleStride());
+            int cells = gridSize * gridSize * gridSize;
+            if (command.obstacle() == null
+                    || command.obstacle().length != cells
+                    || command.flowState() == null
+                    || command.flowState().length != cells * FLOW_CHANNELS) {
+                lastError = "debug Q live failed: invalid solid mask or flow state";
+                return;
+            }
+            destroyDebugRegionSolver();
+            long handle = bridge.createWindTunnelSolver(
+                    gridSize,
+                    gridSize,
+                    gridSize,
+                    command.cellSizeBlocks(),
+                    DT_SECONDS
+            );
+            if (handle == 0L) {
+                lastError = "debug live createWindTunnelSolver failed: " + bridge.windTunnelLastError();
+                return;
+            }
+            if (!bridge.setWindTunnelSolidMask(
+                    handle,
+                    gridSize,
+                    gridSize,
+                    gridSize,
+                    command.obstacle()
+            )) {
+                lastError = "debug live setWindTunnelSolidMask failed: " + bridge.windTunnelLastError();
+                bridge.destroyWindTunnelSolver(handle);
+                return;
+            }
+            if (!bridge.setWindTunnelFlowState(
+                    handle,
+                    gridSize,
+                    gridSize,
+                    gridSize,
+                    command.flowState()
+            )) {
+                lastError = "debug live setWindTunnelFlowState failed: " + bridge.windTunnelLastError();
+                bridge.destroyWindTunnelSolver(handle);
+                return;
+            }
+            debugRegionSolver = new DebugRegionSolver(
+                    handle,
+                    command.worldKey(),
+                    command.dimensionId(),
+                    command.origin().immutable(),
+                    gridSize,
+                    sampleStride,
+                    command.solidCells(),
+                    command.entityCells(),
+                    command.includeEntities(),
+                    command.cellSizeBlocks(),
+                    command.packedSolidVoxels(),
+                    command.obstacle(),
+                    command.inletVx(),
+                    command.inletVy(),
+                    command.inletVz()
+            );
+            advanceAndPublishDebugRegion(debugRegionSolver, Math.max(1, command.initialSteps()));
+        }
+
+        private void handleDebugRegionStep(DebugRegionStepCommand command) {
+            DebugRegionSolver solver = debugRegionSolver;
+            if (solver == null || !ensureRuntime(solver.worldKey)) {
+                return;
+            }
+            if (!refreshDebugRegionMask(solver, command)) {
+                return;
+            }
+            solver.inletVx = command.inletVx();
+            solver.inletVy = command.inletVy();
+            solver.inletVz = command.inletVz();
+            advanceAndPublishDebugRegion(solver, Math.max(1, command.steps()));
+        }
+
+        private boolean refreshDebugRegionMask(DebugRegionSolver solver, DebugRegionStepCommand command) {
+            if (command.obstacle() == null) {
+                return true;
+            }
+            int cells = solver.gridSize * solver.gridSize * solver.gridSize;
+            if (command.obstacle().length != cells) {
+                lastError = "debug live mask refresh failed: invalid solid mask";
+                return false;
+            }
+            if (!bridge.setWindTunnelSolidMask(
+                    solver.handle,
+                    solver.gridSize,
+                    solver.gridSize,
+                    solver.gridSize,
+                    command.obstacle()
+            )) {
+                lastError = "debug live setWindTunnelSolidMask refresh failed: " + bridge.windTunnelLastError();
+                return false;
+            }
+            solver.solidCells = Math.max(0, command.solidCells());
+            solver.entityCells = Math.max(0, command.entityCells());
+            solver.includeEntities = command.includeEntities();
+            solver.cellSizeBlocks = command.cellSizeBlocks();
+            solver.packedSolidVoxels = command.packedSolidVoxels() == null
+                    ? new int[0]
+                    : java.util.Arrays.copyOf(command.packedSolidVoxels(), command.packedSolidVoxels().length);
+            solver.solidMask = java.util.Arrays.copyOf(command.obstacle(), command.obstacle().length);
+            return true;
+        }
+
+        private void handleDebugRegionStop() {
+            destroyDebugRegionSolver();
+        }
+
+        private void advanceAndPublishDebugRegion(DebugRegionSolver solver, int steps) {
+            long stepStart = System.nanoTime();
+            if (!bridge.advanceWindTunnel(
+                    solver.handle,
+                    steps,
+                    solver.inletVx,
+                    solver.inletVy,
+                    solver.inletVz,
+                    AerodynamicSolver.DEFAULT_AIR_DENSITY_KG_M3,
+                    AerodynamicSolver.DEFAULT_AIR_KINEMATIC_VISCOSITY_M2_S
+            )) {
+                lastError = "debug live advanceWindTunnel failed: " + bridge.windTunnelLastError();
+                return;
+            }
+            lastStepNanos = System.nanoTime() - stepStart;
+
+            PublishTarget target = new PublishTarget(solver.dimensionId, solver.origin, 0, 0, 0);
+            long qStart = System.nanoTime();
+            LocalQIsoSnapshot qSnapshot = buildNativeQIsoSnapshot(
+                    solver.handle,
+                    target,
+                    solver.gridSize,
+                    solver.sampleStride,
+                    solver.cellSizeBlocks,
+                    true
+            );
+            if (qSnapshot == null) {
+                float[] flowAtlas = new float[packedValueCount(solver.gridSize, solver.sampleStride)];
+                if (!bridge.extractWindTunnelFlowAtlas(
+                        solver.handle,
+                        solver.gridSize,
+                        solver.gridSize,
+                        solver.gridSize,
+                        solver.sampleStride,
+                        flowAtlas
+                )) {
+                    lastError = "debug live extractWindTunnelFlowAtlas failed: " + bridge.windTunnelLastError();
+                    return;
+                }
+                qSnapshot = buildQIsoSnapshot(
+                        target,
+                        solver.gridSize,
+                        solver.sampleStride,
+                        solver.cellSizeBlocks,
+                        flowAtlas,
+                        true
+                );
+                fallbackQIsoSnapshots++;
+            } else {
+                nativeQIsoSnapshots++;
+            }
+            qSnapshot = withDebugSolidMask(qSnapshot, solver.packedSolidVoxels, solver.solidMask);
+            lastQIsoNanos = System.nanoTime() - qStart;
+            qIsoSnapshots.offer(qSnapshot);
+            publishedQIsoSnapshots++;
+            lastRuntimeInfo = bridge.runtimeInfo();
+            lastError = "-";
+        }
+
         private void handleBoundaryReference(BoundaryReferenceCommand command) {
             if (!ensureRuntime(command.worldKey())) {
                 return;
@@ -2650,12 +4145,12 @@ public final class ClientL2Solver {
             }
             lastStepNanos = System.nanoTime() - start;
             if (command.publishTargets().length > 0) {
-                publishTargets(command.worldKey(), command.publishTargets());
+                publishTargets(command.worldKey(), command.publishTargets(), command.publishQIso());
             }
             lastRuntimeInfo = bridge.runtimeInfo();
         }
 
-        private void publishTargets(long worldKey, PublishTarget[] targets) {
+        private void publishTargets(long worldKey, PublishTarget[] targets, boolean publishQIso) {
             long start = System.nanoTime();
             for (PublishTarget target : targets) {
                 int sampleStride = LOCAL_PUBLISH_SAMPLE_STRIDE;
@@ -2681,11 +4176,301 @@ public final class ClientL2Solver {
                     lastError = "extractWindTunnelFlowAtlas failed: " + bridge.windTunnelLastError();
                     continue;
                 }
+                if (publishQIso) {
+                    long qStart = System.nanoTime();
+                    LocalQIsoSnapshot qSnapshot = buildNativeQIsoSnapshot(solver.handle, target, sampleStride);
+                    if (qSnapshot == null) {
+                        qSnapshot = buildQIsoSnapshot(target, sampleStride, flowAtlas);
+                        fallbackQIsoSnapshots++;
+                    } else {
+                        nativeQIsoSnapshots++;
+                    }
+                    lastQIsoNanos = System.nanoTime() - qStart;
+                    qIsoSnapshots.offer(qSnapshot);
+                    publishedQIsoSnapshots++;
+                }
                 packFlowAtlas(flowAtlas, packedFlow);
                 atlases.offer(new LocalAtlasSnapshot(target.dimensionId(), target.origin(), sampleStride, packedFlow));
                 publishedAtlases++;
             }
             lastPublishNanos = System.nanoTime() - start;
+        }
+
+        private LocalQIsoSnapshot buildNativeQIsoSnapshot(
+                long solverHandle,
+                PublishTarget target,
+                int sampleStride
+        ) {
+            return buildNativeQIsoSnapshot(solverHandle, target, BRICK_SIZE, sampleStride, 1.0f, false);
+        }
+
+        private LocalQIsoSnapshot buildNativeQIsoSnapshot(
+                long solverHandle,
+                PublishTarget target,
+                int gridSize,
+                int sampleStride,
+                float cellSizeBlocks,
+                boolean debug
+        ) {
+            int atlasResolution = (gridSize + sampleStride - 1) / sampleStride;
+            if (qIsoDisplayMode == QIsoDisplayMode.VOXELS) {
+                return buildNativeQIsoPointSnapshot(
+                        solverHandle,
+                        target,
+                        gridSize,
+                        sampleStride,
+                        cellSizeBlocks,
+                        debug,
+                        atlasResolution
+                );
+            }
+            NativeSimulationBridge.WindTunnelQCriterionIsoTriangles nativeQ =
+                    bridge.extractWindTunnelQCriterionIsoTriangles(
+                            solverHandle,
+                            gridSize,
+                            gridSize,
+                            gridSize,
+                            sampleStride,
+                            qIsoFixedThreshold,
+                            qIsoAutoThresholdFraction,
+                            Q_ISO_SCALE,
+                            Q_ISO_MAX_TRIANGLES
+                    );
+            if (nativeQ == null) {
+                return null;
+            }
+            float[] triangleVertices = nativeQ.triangleVertices() == null ? new float[0] : nativeQ.triangleVertices();
+            return new LocalQIsoSnapshot(
+                    target.dimensionId(),
+                    target.origin(),
+                    sampleStride,
+                    atlasResolution,
+                    new int[0],
+                    triangleVertices,
+                    new int[0],
+                    cellSizeBlocks,
+                    nativeQ.threshold(),
+                    nativeQ.maxQ(),
+                    nativeQ.positiveSamples(),
+                    debug
+            );
+        }
+
+        private LocalQIsoSnapshot buildNativeQIsoPointSnapshot(
+                long solverHandle,
+                PublishTarget target,
+                int gridSize,
+                int sampleStride,
+                float cellSizeBlocks,
+                boolean debug,
+                int atlasResolution
+        ) {
+            NativeSimulationBridge.WindTunnelQCriterionIsoPoints nativeQ =
+                    bridge.extractWindTunnelQCriterionIsoPoints(
+                            solverHandle,
+                            gridSize,
+                            gridSize,
+                            gridSize,
+                            sampleStride,
+                            qIsoFixedThreshold,
+                            qIsoAutoThresholdFraction,
+                            Q_ISO_SCALE,
+                            Q_ISO_MAX_POINTS
+                    );
+            if (nativeQ == null) {
+                return null;
+            }
+            int[] packedPoints = nativeQ.packedPoints() == null ? new int[0] : nativeQ.packedPoints();
+            return new LocalQIsoSnapshot(
+                    target.dimensionId(),
+                    target.origin(),
+                    sampleStride,
+                    atlasResolution,
+                    packedPoints,
+                    new float[0],
+                    new int[0],
+                    cellSizeBlocks,
+                    nativeQ.threshold(),
+                    nativeQ.maxQ(),
+                    nativeQ.positiveSamples(),
+                    debug
+            );
+        }
+
+        private LocalQIsoSnapshot withDebugSolidMask(
+                LocalQIsoSnapshot snapshot,
+                int[] packedSolidVoxels,
+                byte[] solidMask
+        ) {
+            if (snapshot == null) {
+                return null;
+            }
+            int[] packedSolidCopy = packedSolidVoxels == null
+                    ? new int[0]
+                    : java.util.Arrays.copyOf(packedSolidVoxels, packedSolidVoxels.length);
+            LocalQIsoSnapshot withMask = new LocalQIsoSnapshot(
+                    snapshot.dimensionId(),
+                    snapshot.origin(),
+                    snapshot.sampleStride(),
+                    snapshot.atlasResolution(),
+                    snapshot.packedPoints(),
+                    snapshot.triangleVertices(),
+                    packedSolidCopy,
+                    snapshot.cellSizeBlocks(),
+                    snapshot.threshold(),
+                    snapshot.maxQ(),
+                    snapshot.positiveSamples(),
+                    snapshot.debug()
+            );
+            return filterDebugQIsoNearSolid(withMask, solidMask);
+        }
+
+        private LocalQIsoSnapshot filterDebugQIsoNearSolid(LocalQIsoSnapshot snapshot, byte[] solidMask) {
+            int rejectCells = qIsoSolidRejectCells;
+            if (!snapshot.debug()
+                    || rejectCells <= 0
+                    || solidMask == null
+                    || solidMask.length == 0
+                    || (snapshot.packedPoints().length == 0 && snapshot.triangleVertices().length == 0)) {
+                return snapshot;
+            }
+            int maskResolution = cubeResolution(solidMask.length);
+            if (maskResolution <= 0) {
+                return snapshot;
+            }
+            boolean[] rejectMask = buildSolidRejectMask(solidMask, maskResolution, rejectCells);
+            int[] points = filterQIsoPointsNearSolid(
+                    snapshot.packedPoints(),
+                    snapshot.sampleStride(),
+                    rejectMask,
+                    maskResolution
+            );
+            float[] triangles = filterQIsoTrianglesNearSolid(
+                    snapshot.triangleVertices(),
+                    rejectMask,
+                    maskResolution
+            );
+            if (points == snapshot.packedPoints() && triangles == snapshot.triangleVertices()) {
+                return snapshot;
+            }
+            return new LocalQIsoSnapshot(
+                    snapshot.dimensionId(),
+                    snapshot.origin(),
+                    snapshot.sampleStride(),
+                    snapshot.atlasResolution(),
+                    points,
+                    triangles,
+                    snapshot.packedSolidVoxels(),
+                    snapshot.cellSizeBlocks(),
+                    snapshot.threshold(),
+                    snapshot.maxQ(),
+                    snapshot.positiveSamples(),
+                    snapshot.debug()
+            );
+        }
+
+        private int cubeResolution(int cells) {
+            int resolution = (int) Math.round(Math.cbrt(cells));
+            return resolution > 0 && resolution * resolution * resolution == cells ? resolution : -1;
+        }
+
+        private boolean[] buildSolidRejectMask(byte[] solidMask, int resolution, int rejectCells) {
+            boolean[] rejectMask = new boolean[solidMask.length];
+            int radius = Mth.clamp(rejectCells, 0, Q_ISO_SOLID_REJECT_MAX_CELLS);
+            for (int x = 0; x < resolution; x++) {
+                for (int y = 0; y < resolution; y++) {
+                    for (int z = 0; z < resolution; z++) {
+                        int cell = cellIndex(resolution, x, y, z);
+                        if (solidMask[cell] == 0) {
+                            continue;
+                        }
+                        for (int dx = -radius; dx <= radius; dx++) {
+                            int nx = x + dx;
+                            if (nx < 0 || nx >= resolution) {
+                                continue;
+                            }
+                            for (int dy = -radius; dy <= radius; dy++) {
+                                int ny = y + dy;
+                                if (ny < 0 || ny >= resolution) {
+                                    continue;
+                                }
+                                for (int dz = -radius; dz <= radius; dz++) {
+                                    int nz = z + dz;
+                                    if (nz < 0 || nz >= resolution) {
+                                        continue;
+                                    }
+                                    rejectMask[cellIndex(resolution, nx, ny, nz)] = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return rejectMask;
+        }
+
+        private int[] filterQIsoPointsNearSolid(
+                int[] packedPoints,
+                int sampleStride,
+                boolean[] rejectMask,
+                int maskResolution
+        ) {
+            if (packedPoints.length == 0) {
+                return packedPoints;
+            }
+            int[] filtered = new int[packedPoints.length];
+            int written = 0;
+            int stride = Math.max(1, sampleStride);
+            for (int packedPoint : packedPoints) {
+                int x = Mth.clamp((packedPoint & 0xFF) * stride, 0, maskResolution - 1);
+                int y = Mth.clamp(((packedPoint >>> 8) & 0xFF) * stride, 0, maskResolution - 1);
+                int z = Mth.clamp(((packedPoint >>> 16) & 0xFF) * stride, 0, maskResolution - 1);
+                if (rejectMask[cellIndex(maskResolution, x, y, z)]) {
+                    continue;
+                }
+                filtered[written++] = packedPoint;
+            }
+            return written == packedPoints.length ? packedPoints : java.util.Arrays.copyOf(filtered, written);
+        }
+
+        private float[] filterQIsoTrianglesNearSolid(
+                float[] triangleVertices,
+                boolean[] rejectMask,
+                int maskResolution
+        ) {
+            if (triangleVertices.length < 9) {
+                return triangleVertices;
+            }
+            float[] filtered = new float[triangleVertices.length];
+            int written = 0;
+            for (int i = 0; i + 8 < triangleVertices.length; i += 9) {
+                if (qIsoVertexRejected(triangleVertices[i], triangleVertices[i + 1], triangleVertices[i + 2], rejectMask, maskResolution)
+                        || qIsoVertexRejected(triangleVertices[i + 3], triangleVertices[i + 4], triangleVertices[i + 5], rejectMask, maskResolution)
+                        || qIsoVertexRejected(triangleVertices[i + 6], triangleVertices[i + 7], triangleVertices[i + 8], rejectMask, maskResolution)) {
+                    continue;
+                }
+                System.arraycopy(triangleVertices, i, filtered, written, 9);
+                written += 9;
+            }
+            return written == triangleVertices.length
+                    ? triangleVertices
+                    : java.util.Arrays.copyOf(filtered, written);
+        }
+
+        private boolean qIsoVertexRejected(
+                float x,
+                float y,
+                float z,
+                boolean[] rejectMask,
+                int maskResolution
+        ) {
+            if (!Float.isFinite(x) || !Float.isFinite(y) || !Float.isFinite(z)) {
+                return true;
+            }
+            int ix = Mth.clamp((int) Math.floor(x), 0, maskResolution - 1);
+            int iy = Mth.clamp((int) Math.floor(y), 0, maskResolution - 1);
+            int iz = Mth.clamp((int) Math.floor(z), 0, maskResolution - 1);
+            return rejectMask[cellIndex(maskResolution, ix, iy, iz)];
         }
 
         private int packedValueCount(int brickSize, int sampleStride) {
@@ -2735,11 +4520,451 @@ public final class ClientL2Solver {
             }
         }
 
+        private LocalQIsoSnapshot buildQIsoSnapshot(PublishTarget target, int sampleStride, float[] flowAtlas) {
+            return buildQIsoSnapshot(target, BRICK_SIZE, sampleStride, 1.0f, flowAtlas, false);
+        }
+
+        private LocalQIsoSnapshot buildQIsoSnapshot(
+                PublishTarget target,
+                int gridSize,
+                int sampleStride,
+                float cellSizeBlocks,
+                float[] flowAtlas,
+                boolean debug
+        ) {
+            int atlasResolution = (gridSize + sampleStride - 1) / sampleStride;
+            int cells = atlasResolution * atlasResolution * atlasResolution;
+            if (atlasResolution < 3 || flowAtlas == null || flowAtlas.length < cells * FLOW_CHANNELS) {
+                return emptyQIsoSnapshot(target, sampleStride, atlasResolution, cellSizeBlocks, debug);
+            }
+            QField qField = buildQField(atlasResolution, sampleStride, cellSizeBlocks, flowAtlas);
+            float[] qValues = qField.values();
+            float maxQ = qField.maxQ();
+            int positiveSamples = qField.positiveSamples();
+            float fixedThreshold = qIsoFixedThreshold;
+            float threshold = fixedThreshold > 0.0f
+                    ? fixedThreshold
+                    : maxQ * qIsoAutoThresholdFraction;
+            if (!(threshold > 0.0f) || !(maxQ > threshold) || positiveSamples <= 0) {
+                return emptyQIsoSnapshot(
+                        target,
+                        sampleStride,
+                        atlasResolution,
+                        cellSizeBlocks,
+                        threshold,
+                        maxQ,
+                        positiveSamples,
+                        debug
+                );
+            }
+            int aboveThreshold = 0;
+            for (float q : qValues) {
+                if (q > threshold) {
+                    aboveThreshold++;
+                }
+            }
+            if (aboveThreshold <= 0) {
+                return emptyQIsoSnapshot(
+                        target,
+                        sampleStride,
+                        atlasResolution,
+                        cellSizeBlocks,
+                        threshold,
+                        maxQ,
+                        positiveSamples,
+                        debug
+                );
+            }
+            float[] triangleVertices = qIsoDisplayMode == QIsoDisplayMode.VOXELS
+                    ? new float[0]
+                    : buildQIsoSurfaceTriangles(qValues, atlasResolution, sampleStride, threshold);
+            int keepEvery = Math.max(1, (aboveThreshold + Q_ISO_MAX_POINTS - 1) / Q_ISO_MAX_POINTS);
+            int[] packed = new int[Math.min(aboveThreshold, Q_ISO_MAX_POINTS)];
+            int seen = 0;
+            int written = 0;
+            float invRange = 1.0f / Math.max(maxQ - threshold, 1.0e-12f);
+            for (int x = 1; x < atlasResolution - 1; x++) {
+                for (int y = 1; y < atlasResolution - 1; y++) {
+                    for (int z = 1; z < atlasResolution - 1; z++) {
+                        float q = qValues[atlasCellIndex(atlasResolution, x, y, z)];
+                        if (q <= threshold) {
+                            continue;
+                        }
+                        if ((seen++ % keepEvery) != 0) {
+                            continue;
+                        }
+                        int strength = Mth.clamp(Math.round((q - threshold) * invRange * 255.0f), 1, 255);
+                        packed[written++] = packQIsoPoint(x, y, z, strength);
+                        if (written >= packed.length) {
+                            return new LocalQIsoSnapshot(
+                                    target.dimensionId(),
+                                    target.origin(),
+                                    sampleStride,
+                                    atlasResolution,
+                                    packed,
+                                    triangleVertices,
+                                    new int[0],
+                                    cellSizeBlocks,
+                                    threshold,
+                                    maxQ,
+                                    positiveSamples,
+                                    debug
+                            );
+                        }
+                    }
+                }
+            }
+            if (written < packed.length) {
+                packed = java.util.Arrays.copyOf(packed, written);
+            }
+            return new LocalQIsoSnapshot(
+                    target.dimensionId(),
+                    target.origin(),
+                    sampleStride,
+                    atlasResolution,
+                    packed,
+                    triangleVertices,
+                    new int[0],
+                    cellSizeBlocks,
+                    threshold,
+                    maxQ,
+                    positiveSamples,
+                    debug
+            );
+        }
+
+        private QField buildQField(
+                int atlasResolution,
+                int sampleStride,
+                float cellSizeBlocks,
+                float[] flowAtlas
+        ) {
+            int cells = atlasResolution * atlasResolution * atlasResolution;
+            float[] qValues = new float[cells];
+            if (atlasResolution < 3 || flowAtlas == null || flowAtlas.length < cells * FLOW_CHANNELS) {
+                return new QField(qValues, 0.0f, 0);
+            }
+            float maxQ = 0.0f;
+            int positiveSamples = 0;
+            float invTwoDx = 0.5f / Math.max(DX_METERS * sampleStride * cellSizeBlocks, 1.0e-6f);
+            for (int x = 1; x < atlasResolution - 1; x++) {
+                for (int y = 1; y < atlasResolution - 1; y++) {
+                    for (int z = 1; z < atlasResolution - 1; z++) {
+                        float q = qCriterionAt(flowAtlas, atlasResolution, x, y, z, invTwoDx);
+                        int cell = atlasCellIndex(atlasResolution, x, y, z);
+                        qValues[cell] = q;
+                        if (q > 0.0f && Float.isFinite(q)) {
+                            positiveSamples++;
+                            if (q > maxQ) {
+                                maxQ = q;
+                            }
+                        }
+                    }
+                }
+            }
+            return new QField(qValues, maxQ, positiveSamples);
+        }
+
+        private float[] buildQIsoSurfaceTriangles(
+                float[] qValues,
+                int atlasResolution,
+                int sampleStride,
+                float threshold
+        ) {
+            int cells = atlasResolution * atlasResolution * atlasResolution;
+            if (atlasResolution < 4
+                    || qValues == null
+                    || qValues.length < cells
+                    || !Float.isFinite(threshold)
+                    || threshold < 0.0f
+                    || Q_ISO_MAX_TRIANGLES <= 0) {
+                return new float[0];
+            }
+            float[] vertices = new float[Q_ISO_MAX_TRIANGLES * 9];
+            float[] cubeValues = new float[8];
+            float[] tetraValues = new float[4];
+            float[] tetraPositions = new float[12];
+            float[] points = new float[12];
+            int[] inside = new int[4];
+            int[] outside = new int[4];
+            int triangles = 0;
+            int cubeStart = 1;
+            int cubeEndExclusive = atlasResolution - 2;
+            for (int x = cubeStart; x < cubeEndExclusive && triangles < Q_ISO_MAX_TRIANGLES; x++) {
+                for (int y = cubeStart; y < cubeEndExclusive && triangles < Q_ISO_MAX_TRIANGLES; y++) {
+                    for (int z = cubeStart; z < cubeEndExclusive && triangles < Q_ISO_MAX_TRIANGLES; z++) {
+                        float minQ = Float.POSITIVE_INFINITY;
+                        float maxQ = Float.NEGATIVE_INFINITY;
+                        for (int vertex = 0; vertex < 8; vertex++) {
+                            int offset = vertex * 3;
+                            int vx = x + Q_ISO_CUBE_VERTEX_OFFSETS[offset];
+                            int vy = y + Q_ISO_CUBE_VERTEX_OFFSETS[offset + 1];
+                            int vz = z + Q_ISO_CUBE_VERTEX_OFFSETS[offset + 2];
+                            float q = qValues[atlasCellIndex(atlasResolution, vx, vy, vz)];
+                            cubeValues[vertex] = q;
+                            minQ = Math.min(minQ, q);
+                            maxQ = Math.max(maxQ, q);
+                        }
+                        if (!(maxQ > threshold) || !(minQ <= threshold)) {
+                            continue;
+                        }
+                        for (int tetra = 0; tetra < Q_ISO_TETRAHEDRA.length && triangles < Q_ISO_MAX_TRIANGLES; tetra += 4) {
+                            for (int i = 0; i < 4; i++) {
+                                int cubeVertex = Q_ISO_TETRAHEDRA[tetra + i];
+                                int cubeOffset = cubeVertex * 3;
+                                int dst = i * 3;
+                                tetraValues[i] = cubeValues[cubeVertex];
+                                tetraPositions[dst] = x + Q_ISO_CUBE_VERTEX_OFFSETS[cubeOffset];
+                                tetraPositions[dst + 1] = y + Q_ISO_CUBE_VERTEX_OFFSETS[cubeOffset + 1];
+                                tetraPositions[dst + 2] = z + Q_ISO_CUBE_VERTEX_OFFSETS[cubeOffset + 2];
+                            }
+                            triangles = appendQIsoTetraTriangles(
+                                    vertices,
+                                    triangles,
+                                    sampleStride,
+                                    threshold,
+                                    tetraValues,
+                                    tetraPositions,
+                                    points,
+                                    inside,
+                                    outside
+                            );
+                        }
+                    }
+                }
+            }
+            int floats = triangles * 9;
+            return floats == vertices.length ? vertices : java.util.Arrays.copyOf(vertices, floats);
+        }
+
+        private int appendQIsoTetraTriangles(
+                float[] out,
+                int triangles,
+                int sampleStride,
+                float threshold,
+                float[] values,
+                float[] positions,
+                float[] points,
+                int[] inside,
+                int[] outside
+        ) {
+            int insideCount = 0;
+            int outsideCount = 0;
+            for (int i = 0; i < 4; i++) {
+                if (values[i] > threshold) {
+                    inside[insideCount++] = i;
+                } else {
+                    outside[outsideCount++] = i;
+                }
+            }
+            if (insideCount == 0 || insideCount == 4 || triangles >= Q_ISO_MAX_TRIANGLES) {
+                return triangles;
+            }
+            if (insideCount == 1) {
+                int i0 = inside[0];
+                writeQIsoIntersection(values, positions, i0, outside[0], sampleStride, threshold, points, 0);
+                writeQIsoIntersection(values, positions, i0, outside[1], sampleStride, threshold, points, 1);
+                writeQIsoIntersection(values, positions, i0, outside[2], sampleStride, threshold, points, 2);
+                return appendQIsoTriangle(out, triangles, points, 0, 1, 2);
+            }
+            if (insideCount == 3) {
+                int o0 = outside[0];
+                writeQIsoIntersection(values, positions, o0, inside[0], sampleStride, threshold, points, 0);
+                writeQIsoIntersection(values, positions, o0, inside[1], sampleStride, threshold, points, 1);
+                writeQIsoIntersection(values, positions, o0, inside[2], sampleStride, threshold, points, 2);
+                return appendQIsoTriangle(out, triangles, points, 0, 2, 1);
+            }
+
+            int i0 = inside[0];
+            int i1 = inside[1];
+            int o0 = outside[0];
+            int o1 = outside[1];
+            writeQIsoIntersection(values, positions, i0, o0, sampleStride, threshold, points, 0);
+            writeQIsoIntersection(values, positions, i1, o0, sampleStride, threshold, points, 1);
+            writeQIsoIntersection(values, positions, i1, o1, sampleStride, threshold, points, 2);
+            writeQIsoIntersection(values, positions, i0, o1, sampleStride, threshold, points, 3);
+            triangles = appendQIsoTriangle(out, triangles, points, 0, 1, 2);
+            return appendQIsoTriangle(out, triangles, points, 0, 2, 3);
+        }
+
+        private void writeQIsoIntersection(
+                float[] values,
+                float[] positions,
+                int a,
+                int b,
+                int sampleStride,
+                float threshold,
+                float[] points,
+                int pointIndex
+        ) {
+            float valueA = values[a];
+            float valueB = values[b];
+            float denom = valueB - valueA;
+            float t = Math.abs(denom) <= 1.0e-12f ? 0.5f : (threshold - valueA) / denom;
+            t = Mth.clamp(t, 0.0f, 1.0f);
+            int aBase = a * 3;
+            int bBase = b * 3;
+            int dst = pointIndex * 3;
+            points[dst] = (positions[aBase] + (positions[bBase] - positions[aBase]) * t) * sampleStride;
+            points[dst + 1] = (positions[aBase + 1] + (positions[bBase + 1] - positions[aBase + 1]) * t) * sampleStride;
+            points[dst + 2] = (positions[aBase + 2] + (positions[bBase + 2] - positions[aBase + 2]) * t) * sampleStride;
+        }
+
+        private int appendQIsoTriangle(float[] out, int triangles, float[] points, int a, int b, int c) {
+            if (triangles >= Q_ISO_MAX_TRIANGLES) {
+                return triangles;
+            }
+            int dst = triangles * 9;
+            copyQIsoPoint(points, a, out, dst);
+            copyQIsoPoint(points, b, out, dst + 3);
+            copyQIsoPoint(points, c, out, dst + 6);
+            return triangles + 1;
+        }
+
+        private void copyQIsoPoint(float[] src, int point, float[] dst, int dstBase) {
+            int srcBase = point * 3;
+            dst[dstBase] = src[srcBase];
+            dst[dstBase + 1] = src[srcBase + 1];
+            dst[dstBase + 2] = src[srcBase + 2];
+        }
+
+        private LocalQIsoSnapshot emptyQIsoSnapshot(PublishTarget target, int sampleStride, int atlasResolution) {
+            return emptyQIsoSnapshot(target, sampleStride, atlasResolution, 1.0f, false);
+        }
+
+        private LocalQIsoSnapshot emptyQIsoSnapshot(
+                PublishTarget target,
+                int sampleStride,
+                int atlasResolution,
+                boolean debug
+        ) {
+            return emptyQIsoSnapshot(target, sampleStride, atlasResolution, 1.0f, 0.0f, 0.0f, 0, debug);
+        }
+
+        private LocalQIsoSnapshot emptyQIsoSnapshot(
+                PublishTarget target,
+                int sampleStride,
+                int atlasResolution,
+                float cellSizeBlocks,
+                boolean debug
+        ) {
+            return emptyQIsoSnapshot(target, sampleStride, atlasResolution, cellSizeBlocks, 0.0f, 0.0f, 0, debug);
+        }
+
+        private LocalQIsoSnapshot emptyQIsoSnapshot(
+                PublishTarget target,
+                int sampleStride,
+                int atlasResolution,
+                float threshold,
+                float maxQ,
+                int positiveSamples
+        ) {
+            return emptyQIsoSnapshot(target, sampleStride, atlasResolution, 1.0f, threshold, maxQ, positiveSamples, false);
+        }
+
+        private LocalQIsoSnapshot emptyQIsoSnapshot(
+                PublishTarget target,
+                int sampleStride,
+                int atlasResolution,
+                float cellSizeBlocks,
+                float threshold,
+                float maxQ,
+                int positiveSamples,
+                boolean debug
+        ) {
+            return new LocalQIsoSnapshot(
+                    target.dimensionId(),
+                    target.origin(),
+                    sampleStride,
+                    atlasResolution,
+                    new int[0],
+                    new float[0],
+                    new int[0],
+                    cellSizeBlocks,
+                    threshold,
+                    maxQ,
+                    positiveSamples,
+                    debug
+            );
+        }
+
+        private float qCriterionAt(
+                float[] flowAtlas,
+                int resolution,
+                int x,
+                int y,
+                int z,
+                float invTwoDx
+        ) {
+            float duDx = (velocityComponent(flowAtlas, resolution, x + 1, y, z, 0)
+                    - velocityComponent(flowAtlas, resolution, x - 1, y, z, 0)) * invTwoDx;
+            float duDy = (velocityComponent(flowAtlas, resolution, x, y + 1, z, 0)
+                    - velocityComponent(flowAtlas, resolution, x, y - 1, z, 0)) * invTwoDx;
+            float duDz = (velocityComponent(flowAtlas, resolution, x, y, z + 1, 0)
+                    - velocityComponent(flowAtlas, resolution, x, y, z - 1, 0)) * invTwoDx;
+
+            float dvDx = (velocityComponent(flowAtlas, resolution, x + 1, y, z, 1)
+                    - velocityComponent(flowAtlas, resolution, x - 1, y, z, 1)) * invTwoDx;
+            float dvDy = (velocityComponent(flowAtlas, resolution, x, y + 1, z, 1)
+                    - velocityComponent(flowAtlas, resolution, x, y - 1, z, 1)) * invTwoDx;
+            float dvDz = (velocityComponent(flowAtlas, resolution, x, y, z + 1, 1)
+                    - velocityComponent(flowAtlas, resolution, x, y, z - 1, 1)) * invTwoDx;
+
+            float dwDx = (velocityComponent(flowAtlas, resolution, x + 1, y, z, 2)
+                    - velocityComponent(flowAtlas, resolution, x - 1, y, z, 2)) * invTwoDx;
+            float dwDy = (velocityComponent(flowAtlas, resolution, x, y + 1, z, 2)
+                    - velocityComponent(flowAtlas, resolution, x, y - 1, z, 2)) * invTwoDx;
+            float dwDz = (velocityComponent(flowAtlas, resolution, x, y, z + 1, 2)
+                    - velocityComponent(flowAtlas, resolution, x, y, z - 1, 2)) * invTwoDx;
+
+            float s11 = duDx;
+            float s22 = dvDy;
+            float s33 = dwDz;
+            float s12 = 0.5f * (duDy + dvDx);
+            float s13 = 0.5f * (duDz + dwDx);
+            float s23 = 0.5f * (dvDz + dwDy);
+
+            float o12 = 0.5f * (duDy - dvDx);
+            float o13 = 0.5f * (duDz - dwDx);
+            float o23 = 0.5f * (dvDz - dwDy);
+
+            float strainNorm2 = s11 * s11 + s22 * s22 + s33 * s33
+                    + 2.0f * (s12 * s12 + s13 * s13 + s23 * s23);
+            float rotationNorm2 = 2.0f * (o12 * o12 + o13 * o13 + o23 * o23);
+            float q = 0.5f * (rotationNorm2 - strainNorm2);
+            return Float.isFinite(q) ? q : 0.0f;
+        }
+
+        private float velocityComponent(float[] flowAtlas, int resolution, int x, int y, int z, int component) {
+            int base = atlasCellIndex(resolution, x, y, z) * FLOW_CHANNELS + component;
+            return base >= 0 && base < flowAtlas.length ? flowAtlas[base] : 0.0f;
+        }
+
+        private int atlasCellIndex(int resolution, int x, int y, int z) {
+            return (x * resolution + y) * resolution + z;
+        }
+
+        private int packQIsoPoint(int x, int y, int z, int strength) {
+            return (x & 0xFF)
+                    | ((y & 0xFF) << 8)
+                    | ((z & 0xFF) << 16)
+                    | ((strength & 0xFF) << 24);
+        }
+
         private void releaseService() {
+            destroyDebugRegionSolver();
             for (WorkerSolver solver : solvers.values()) {
                 bridge.destroyWindTunnelSolver(solver.handle);
             }
             solvers.clear();
+        }
+
+        private void destroyDebugRegionSolver() {
+            DebugRegionSolver solver = debugRegionSolver;
+            debugRegionSolver = null;
+            if (solver != null) {
+                bridge.destroyWindTunnelSolver(solver.handle);
+            }
         }
     }
 

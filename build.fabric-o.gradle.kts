@@ -62,6 +62,7 @@ mixins {
 			"client.CampfireSmokeParticleMixin",
 			"client.ClientWorldBlockStateMixin",
 			"client.ParticleAccessor",
+			"client.ParticleEngineMixin",
 			"client.ParticleMixin"
 		)
 		minVersion("1.21.11", "client.LeavesParticleMixin")

@@ -115,6 +115,30 @@ AERO_LBM_CAPI_EXPORT int aero_solver_extract_flow_atlas(
     int out_value_count
 );
 
+AERO_LBM_CAPI_EXPORT int aero_solver_extract_q_criterion_iso_points(
+    long long handle,
+    int stride,
+    float threshold,
+    float threshold_fraction,
+    float q_scale,
+    int* out_points,
+    int point_capacity,
+    int* out_stats,
+    int stats_count
+);
+
+AERO_LBM_CAPI_EXPORT int aero_solver_extract_q_criterion_iso_triangles(
+    long long handle,
+    int stride,
+    float threshold,
+    float threshold_fraction,
+    float q_scale,
+    float* out_vertices,
+    int triangle_capacity,
+    int* out_stats,
+    int stats_count
+);
+
 AERO_LBM_CAPI_EXPORT int aero_solver_compute_force_moment(
     long long handle,
     const float* reference_point,

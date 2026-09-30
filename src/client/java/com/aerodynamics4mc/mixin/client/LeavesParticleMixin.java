@@ -2,6 +2,7 @@ package com.aerodynamics4mc.mixin.client;
 
 //? >=1.21.11 {
 import com.aerodynamics4mc.client.ParticleWindController;
+import com.aerodynamics4mc.client.ParticleWindConfig;
 
 import net.minecraft.client.particle.FallingLeavesParticle;
 import net.minecraft.world.phys.Vec3;
@@ -14,6 +15,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 abstract class LeavesParticleMixin {
     @Inject(method = "tick", at = @At("TAIL"))
     private void a4mc$applyLeafWind(CallbackInfo ci) {
+        if (!ParticleWindConfig.allowsBuiltIn(this)) return;
         ParticleAccessor accessor = (ParticleAccessor) this;
         Vec3 next = ParticleWindController.applyLeaves(
                 accessor.a4mc$getWorld(),

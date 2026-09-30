@@ -1,5 +1,9 @@
 package com.aerodynamics4mc.runtime;
 
+import com.aerodynamics4mc.api.A4mcId;
+import com.aerodynamics4mc.api.A4mcWorldRef;
+import com.aerodynamics4mc.api.AeroTerrainApi;
+import com.aerodynamics4mc.api.AeroTerrainSample;
 import net.minecraft.core.Holder;
 import net.minecraft.server.level.ServerChunkCache;
 import net.minecraft.server.level.ServerLevel;
@@ -21,6 +25,22 @@ final class WorldgenSeedTerrainProvider implements SeedTerrainProvider {
 
     @Override
     public TerrainSample sample(ServerLevel world, int blockX, int blockZ) {
+        // Keep integration errors outside the worldgen fallback catch.
+        var id = world.dimension().identifier();
+        AeroTerrainSample integration = AeroTerrainApi.sample(
+                A4mcWorldRef.server(A4mcId.of(id.getNamespace(), id.getPath()), world), blockX, blockZ);
+        if (integration.available()) {
+            byte surface = switch (integration.surfaceClass()) {
+                case WATER -> HashedSeedTerrainProvider.SURFACE_CLASS_WATER;
+                case PLAINS -> HashedSeedTerrainProvider.SURFACE_CLASS_PLAINS;
+                case FOREST -> HashedSeedTerrainProvider.SURFACE_CLASS_FOREST;
+                case ROCK -> HashedSeedTerrainProvider.SURFACE_CLASS_ROCK;
+                case SNOW -> HashedSeedTerrainProvider.SURFACE_CLASS_SNOW;
+                case UNKNOWN -> throw new IllegalArgumentException("Claimed terrain has unknown surface class");
+            };
+            return new TerrainSample(integration.terrainHeightBlocks(), integration.biomeTemperature(),
+                    integration.roughnessLengthMeters(), surface);
+        }
         try {
             ServerChunkCache chunkManager = world.getChunkSource();
             ChunkGenerator generator = chunkManager.getGenerator();

@@ -257,6 +257,36 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_extract_flow_atlas_rect(
     float* out_flow_atlas,
     int value_count
 );
+AERO_LBM_CAPI_EXPORT int aero_lbm_extract_q_criterion_iso_points_rect(
+    int nx,
+    int ny,
+    int nz,
+    long long context_key,
+    int stride,
+    float dx_meters,
+    float threshold,
+    float threshold_fraction,
+    float q_scale,
+    int* out_points,
+    int point_capacity,
+    int* out_stats,
+    int stats_count
+);
+AERO_LBM_CAPI_EXPORT int aero_lbm_extract_q_criterion_iso_triangles_rect(
+    int nx,
+    int ny,
+    int nz,
+    long long context_key,
+    int stride,
+    float dx_meters,
+    float threshold,
+    float threshold_fraction,
+    float q_scale,
+    float* out_vertices,
+    int triangle_capacity,
+    int* out_stats,
+    int stats_count
+);
 AERO_LBM_CAPI_EXPORT int aero_lbm_copy_flow_temperature_subrect(
     int nx,
     int ny,

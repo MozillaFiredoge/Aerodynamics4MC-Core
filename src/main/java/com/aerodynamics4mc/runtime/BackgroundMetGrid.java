@@ -1,5 +1,6 @@
 package com.aerodynamics4mc.runtime;
 
+import com.aerodynamics4mc.api.AeroTerrainApi;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
@@ -56,6 +57,7 @@ final class BackgroundMetGrid {
     private int centerCellZ;
     private long lastRefreshTick = Long.MIN_VALUE;
     private long currentRefreshTick = Long.MIN_VALUE;
+    private long terrainRevision = Long.MIN_VALUE;
     private float currentDeltaSeconds = 1.0f;
     private float currentSolarAltitude = 0.0f;
     private float currentClearSky = 1.0f;
@@ -80,6 +82,9 @@ final class BackgroundMetGrid {
         currentWorld = world;
         currentProvider = provider;
         currentDriver = driver;
+        long nextTerrainRevision = AeroTerrainApi.terrainRevision();
+        boolean terrainChanged = terrainRevision != nextTerrainRevision;
+        terrainRevision = nextTerrainRevision;
         int nextCenterCellX = Math.floorDiv(focus.getX(), cellSizeBlocks);
         int nextCenterCellZ = Math.floorDiv(focus.getZ(), cellSizeBlocks);
         boolean centerChanged = nextCenterCellX != centerCellX || nextCenterCellZ != centerCellZ;
@@ -106,7 +111,13 @@ final class BackgroundMetGrid {
         currentSolarAltitude = Math.max(0.0f, (float) Math.sin(dayPhase * (float) (Math.PI * 2.0)));
         currentClearSky = Mth.clamp(1.0f - 0.65f * rainGradient - 0.25f * thunderGradient, 0.15f, 1.0f);
 
-        if (updateDue || centerChanged || readState.empty()) {
+        if (terrainChanged) {
+            // Preserve the dynamic weather state while refreshing cached static inputs.
+            for (Map.Entry<Long, CellState> entry : cells.entrySet()) {
+                updateTerrain(entry.getValue(), unpackX(entry.getKey()), unpackZ(entry.getKey()));
+            }
+        }
+        if (updateDue || centerChanged || terrainChanged || readState.empty()) {
             ensureActiveCells();
         }
         if (updateDue) {
@@ -122,7 +133,7 @@ final class BackgroundMetGrid {
                 it.remove();
             }
         }
-        if (updateDue || centerChanged || readState.empty()) {
+        if (updateDue || centerChanged || terrainChanged || readState.empty()) {
             publishReadState();
         }
     }
@@ -449,18 +460,21 @@ final class BackgroundMetGrid {
         long key = pack(cellX, cellZ);
         CellState cell = cells.get(key);
         if (cell == null) {
-            int sampleX = cellCenterBlock(cellX);
-            int sampleZ = cellCenterBlock(cellZ);
-            SeedTerrainProvider.TerrainSample terrain = currentProvider.sample(currentWorld, sampleX, sampleZ);
             cell = new CellState();
-            cell.terrainHeightBlocks = terrain.terrainHeightBlocks();
-            cell.biomeTemperature = terrain.biomeTemperature();
-            cell.surfaceClass = terrain.surfaceClass();
-            cell.roughnessLengthMeters = terrain.roughnessLengthMeters();
+            updateTerrain(cell, cellX, cellZ);
             cells.put(key, cell);
         }
         updateDynamicState(cell, cellX, cellZ);
         return cell;
+    }
+
+    private void updateTerrain(CellState cell, int cellX, int cellZ) {
+        SeedTerrainProvider.TerrainSample terrain = currentProvider.sample(
+                currentWorld, cellCenterBlock(cellX), cellCenterBlock(cellZ));
+        cell.terrainHeightBlocks = terrain.terrainHeightBlocks();
+        cell.biomeTemperature = terrain.biomeTemperature();
+        cell.surfaceClass = terrain.surfaceClass();
+        cell.roughnessLengthMeters = terrain.roughnessLengthMeters();
     }
 
     private void updateDynamicState(CellState cell, int cellX, int cellZ) {

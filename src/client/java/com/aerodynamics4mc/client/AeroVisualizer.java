@@ -66,15 +66,22 @@ public final class AeroVisualizer {
     private static final float ANALYSIS_SLICE_GLYPH_LENGTH = 1.4f;
     private static final float ANALYSIS_SLICE_GLYPH_WIDTH = 1.0f;
     private static final double ANALYSIS_SLICE_VIEW_OFFSET_Y = -1.25;
+    private static final double Q_ISO_RENDER_DISTANCE = 144.0;
+    private static final float Q_ISO_POINT_RADIUS = 0.10f;
+    private static final float DEBUG_Q_MASK_POINT_RADIUS = 0.18f;
+    private static final float DEBUG_Q_ISO_MARKER_MAX_RADIUS = 4.0f;
+    private static final float DEBUG_Q_ISO_MARKER_RADIUS_FRACTION = 0.12f;
 
     private final Map<WindowKey, RemoteFlowField> remoteWindows = new HashMap<>();
     private final Map<WindowKey, RemoteFlowField> localWindows = new HashMap<>();
     private final Map<WindowKey, CoarseWindField> coarseWindFields = new HashMap<>();
     private final Map<WindowKey, AnalysisFlowField> analysisWindows = new HashMap<>();
+    private final Map<WindowKey, QCriterionIsoField> qCriterionIsoFields = new HashMap<>();
     private final NativeSimulationBridge analysisCodecBridge = new NativeSimulationBridge();
     private boolean streamingEnabled;
     private boolean renderVelocityVectors = false;
     private boolean renderStreamlines = true;
+    private boolean renderQCriterionIso = false;
     private long clientTickCounter;
 
     void onRuntimeState(AeroFlowState state) {
@@ -83,6 +90,7 @@ public final class AeroVisualizer {
             remoteWindows.clear();
             localWindows.clear();
             coarseWindFields.clear();
+            qCriterionIsoFields.clear();
         }
     }
 
@@ -113,8 +121,188 @@ public final class AeroVisualizer {
         );
     }
 
+    void onLocalQCriterionIsoField(
+            Identifier dimensionId,
+            BlockPos origin,
+            int sampleStride,
+            int atlasResolution,
+            int[] packedPoints,
+            float[] triangleVertices,
+            float threshold,
+            float maxQ,
+            int positiveSamples
+    ) {
+        putQCriterionIsoField(
+                dimensionId,
+                origin,
+                sampleStride,
+                atlasResolution,
+                packedPoints,
+                triangleVertices,
+                new int[0],
+                1.0f,
+                threshold,
+                maxQ,
+                positiveSamples,
+                false,
+                false
+        );
+    }
+
+    void showDebugQCriterionIsoRegion(Identifier dimensionId, BlockPos origin, int sizeBlocks) {
+        int size = Mth.clamp(sizeBlocks, 4, 256);
+        float[] triangleVertices = buildDebugQIsoSphereTriangles(size);
+        showDebugQCriterionIsoField(
+                dimensionId,
+                origin,
+                1,
+                size,
+                new int[0],
+                triangleVertices,
+                1.0f,
+                2.0f,
+                Math.max(1, triangleVertices.length / 9)
+        );
+    }
+
+    void showDebugQCriterionIsoField(
+            Identifier dimensionId,
+            BlockPos origin,
+            int sampleStride,
+            int atlasResolution,
+            int[] packedPoints,
+            float[] triangleVertices,
+            float threshold,
+            float maxQ,
+            int positiveSamples
+    ) {
+        showDebugQCriterionIsoField(
+                dimensionId,
+                origin,
+                sampleStride,
+                atlasResolution,
+                packedPoints,
+                triangleVertices,
+                new int[0],
+                threshold,
+                maxQ,
+                positiveSamples
+        );
+    }
+
+    void showDebugQCriterionIsoField(
+            Identifier dimensionId,
+            BlockPos origin,
+            int sampleStride,
+            int atlasResolution,
+            int[] packedPoints,
+            float[] triangleVertices,
+            int[] packedSolidVoxels,
+            float threshold,
+            float maxQ,
+            int positiveSamples
+    ) {
+        showDebugQCriterionIsoField(
+                dimensionId,
+                origin,
+                sampleStride,
+                atlasResolution,
+                packedPoints,
+                triangleVertices,
+                packedSolidVoxels,
+                1.0f,
+                threshold,
+                maxQ,
+                positiveSamples
+        );
+    }
+
+    void showDebugQCriterionIsoField(
+            Identifier dimensionId,
+            BlockPos origin,
+            int sampleStride,
+            int atlasResolution,
+            int[] packedPoints,
+            float[] triangleVertices,
+            int[] packedSolidVoxels,
+            float cellSizeBlocks,
+            float threshold,
+            float maxQ,
+            int positiveSamples
+    ) {
+        putQCriterionIsoField(
+                dimensionId,
+                origin,
+                sampleStride,
+                atlasResolution,
+                packedPoints,
+                triangleVertices,
+                packedSolidVoxels,
+                cellSizeBlocks,
+                threshold,
+                maxQ,
+                positiveSamples,
+                true,
+                true
+        );
+    }
+
+    void clearQCriterionIsoFields() {
+        qCriterionIsoFields.clear();
+    }
+
+    private void putQCriterionIsoField(
+            Identifier dimensionId,
+            BlockPos origin,
+            int sampleStride,
+            int atlasResolution,
+            int[] packedPoints,
+            float[] triangleVertices,
+            int[] packedSolidVoxels,
+            float cellSizeBlocks,
+            float threshold,
+            float maxQ,
+            int positiveSamples,
+            boolean debug,
+            boolean keepEmptyDebugField
+    ) {
+        WindowKey key = new WindowKey(dimensionId, origin);
+        boolean hasPoints = packedPoints != null && packedPoints.length > 0;
+        boolean hasTriangles = triangleVertices != null && triangleVertices.length >= 9;
+        if (debug) {
+            renderQCriterionIso = true;
+        }
+        if (!renderQCriterionIso
+                || (!keepEmptyDebugField && !hasPoints && !hasTriangles)
+                || atlasResolution <= 0) {
+            qCriterionIsoFields.remove(key);
+            return;
+        }
+        qCriterionIsoFields.put(
+                key,
+                new QCriterionIsoField(
+                        dimensionId,
+                        origin,
+                        Math.max(1, sampleStride),
+                        atlasResolution,
+                        hasPoints ? java.util.Arrays.copyOf(packedPoints, packedPoints.length) : new int[0],
+                        hasTriangles ? java.util.Arrays.copyOf(triangleVertices, triangleVertices.length) : new float[0],
+                        packedSolidVoxels == null
+                                ? new int[0]
+                                : java.util.Arrays.copyOf(packedSolidVoxels, packedSolidVoxels.length),
+                        Math.max(0.03125f, cellSizeBlocks),
+                        threshold,
+                        maxQ,
+                        positiveSamples,
+                        debug,
+                        clientTickCounter
+                )
+        );
+    }
+
     void clearLocalFlowFields() {
         localWindows.clear();
+        qCriterionIsoFields.clear();
     }
 
     void clearRemoteFlowFields() {
@@ -155,6 +343,7 @@ public final class AeroVisualizer {
         localWindows.clear();
         coarseWindFields.clear();
         analysisWindows.clear();
+        qCriterionIsoFields.clear();
         streamingEnabled = false;
     }
 
@@ -166,12 +355,23 @@ public final class AeroVisualizer {
         renderStreamlines = enabled;
     }
 
+    void setRenderQCriterionIso(boolean enabled) {
+        renderQCriterionIso = enabled;
+        if (!enabled) {
+            qCriterionIsoFields.clear();
+        }
+    }
+
     boolean renderVelocityVectorsEnabled() {
         return renderVelocityVectors;
     }
 
     boolean renderStreamlinesEnabled() {
         return renderStreamlines;
+    }
+
+    boolean renderQCriterionIsoEnabled() {
+        return renderQCriterionIso;
     }
 
     AeroWindSample sampleFlow(Identifier dimensionId, Vec3 position) {
@@ -283,14 +483,21 @@ public final class AeroVisualizer {
         analysisWindows.entrySet().removeIf(entry -> {
             return clientTickCounter - entry.getValue().lastUpdatedTick() > REGION_STALE_TICKS * 4L;
         });
+        qCriterionIsoFields.entrySet().removeIf(entry -> {
+            return !entry.getValue().debug()
+                    && clientTickCounter - entry.getValue().lastUpdatedTick() > REGION_STALE_TICKS;
+        });
     }
 
     public void renderAtlasOverlay(/*? fabric{ */ /*WorldRenderContext *//*?} neoforge{ */ RenderLevelStageEvent /*?} */ context) {
-        if (!streamingEnabled || (remoteWindows.isEmpty() && localWindows.isEmpty())) {
+        boolean hasQIsoFields = !qCriterionIsoFields.isEmpty();
+        if ((!streamingEnabled && !hasQIsoFields)
+                || (remoteWindows.isEmpty() && localWindows.isEmpty() && !hasQIsoFields)) {
             return;
         }
         Minecraft client = Minecraft.getInstance();
-        if (client.level == null || client.player == null || !client.getDebugOverlay().showDebugScreen()) {
+        if (client.level == null || client.player == null
+                || (!client.getDebugOverlay().showDebugScreen() && !hasQIsoFields)) {
             return;
         }
         Identifier dimensionId = client.level.dimension().identifier();
@@ -351,6 +558,7 @@ public final class AeroVisualizer {
 		if (analysisSlice != null) {
 			renderAnalysisOverlay(analysisSlice);
 		}
+        renderQCriterionIsoFields(lineBuffer, matrices, dimensionId, cameraPos);
 	}
 
     private void renderAnalysisOverlay(AnalysisSliceView analysisSlice) {
@@ -460,6 +668,218 @@ public final class AeroVisualizer {
             renderStreamlines(buffer, matrices, field, cameraPos);
             matrices.popPose();
         }
+    }
+
+    private void renderQCriterionIsoFields(VertexConsumer buffer, PoseStack matrices, Identifier dimensionId, Vec3 cameraPos) {
+        if (!renderQCriterionIso || buffer == null || matrices == null || qCriterionIsoFields.isEmpty()) {
+            return;
+        }
+        for (QCriterionIsoField field : qCriterionIsoFields.values()) {
+            if (!field.dimensionId().equals(dimensionId)) {
+                continue;
+            }
+            double distanceSq = field.regionBox().distanceToSqr(cameraPos);
+            if (distanceSq > Q_ISO_RENDER_DISTANCE * Q_ISO_RENDER_DISTANCE) {
+                continue;
+            }
+            matrices.pushPose();
+            matrices.translate(
+                    field.origin().getX() - cameraPos.x,
+                    field.origin().getY() - cameraPos.y,
+                    field.origin().getZ() - cameraPos.z
+            );
+            renderQCriterionIsoField(buffer, matrices, field);
+            matrices.popPose();
+        }
+    }
+
+    private void renderQCriterionIsoField(VertexConsumer buffer, PoseStack matrices, QCriterionIsoField field) {
+        if (field.debug()) {
+            renderQCriterionDebugRegionOutline(buffer, matrices, field);
+            renderQCriterionDebugSolidMask(buffer, matrices, field);
+        }
+        if (field.triangleVertices().length >= 9) {
+            renderQCriterionIsoSurface(buffer, matrices, field);
+            return;
+        }
+        var entry = matrices.last();
+        Matrix4f matrix = entry.pose();
+        float coordinateScale = field.coordinateScale();
+        float radius = coordinateScale >= 1.0f
+                ? Math.max(Q_ISO_POINT_RADIUS, 0.08f * coordinateScale)
+                : Math.max(0.02f, 0.08f * coordinateScale);
+        for (int packedPoint : field.packedPoints()) {
+            int x = packedPoint & 0xFF;
+            int y = (packedPoint >>> 8) & 0xFF;
+            int z = (packedPoint >>> 16) & 0xFF;
+            int strength = (packedPoint >>> 24) & 0xFF;
+            float norm = clamp01(strength / 255.0f);
+            int color = qCriterionColor(norm, 0.62f + 0.30f * norm);
+            int a = (color >>> 24) & 0xFF;
+            int r = (color >>> 16) & 0xFF;
+            int g = (color >>> 8) & 0xFF;
+            int b = color & 0xFF;
+            float cx = (x + 0.5f) * coordinateScale;
+            float cy = (y + 0.5f) * coordinateScale;
+            float cz = (z + 0.5f) * coordinateScale;
+            addQIsoLine(buffer, entry, matrix, cx - radius, cy, cz, cx + radius, cy, cz, r, g, b, a);
+            addQIsoLine(buffer, entry, matrix, cx, cy - radius, cz, cx, cy + radius, cz, r, g, b, a);
+            addQIsoLine(buffer, entry, matrix, cx, cy, cz - radius, cx, cy, cz + radius, r, g, b, a);
+        }
+    }
+
+    private void renderQCriterionDebugSolidMask(VertexConsumer buffer, PoseStack matrices, QCriterionIsoField field) {
+        int[] solidVoxels = field.packedSolidVoxels();
+        if (solidVoxels.length == 0) {
+            return;
+        }
+        var entry = matrices.last();
+        Matrix4f matrix = entry.pose();
+        float coordinateScale = field.coordinateScale();
+        float radius = coordinateScale >= 1.0f
+                ? Math.max(DEBUG_Q_MASK_POINT_RADIUS, DEBUG_Q_MASK_POINT_RADIUS * coordinateScale)
+                : Math.max(0.025f, DEBUG_Q_MASK_POINT_RADIUS * coordinateScale);
+        int r = 255;
+        int g = 132;
+        int b = 64;
+        int a = 170;
+        for (int packedVoxel : solidVoxels) {
+            int x = packedVoxel & 0xFF;
+            int y = (packedVoxel >>> 8) & 0xFF;
+            int z = (packedVoxel >>> 16) & 0xFF;
+            float cx = (x + 0.5f) * coordinateScale;
+            float cy = (y + 0.5f) * coordinateScale;
+            float cz = (z + 0.5f) * coordinateScale;
+            addQIsoLine(buffer, entry, matrix, cx - radius, cy, cz, cx + radius, cy, cz, r, g, b, a);
+            addQIsoLine(buffer, entry, matrix, cx, cy - radius, cz, cx, cy + radius, cz, r, g, b, a);
+            addQIsoLine(buffer, entry, matrix, cx, cy, cz - radius, cx, cy, cz + radius, r, g, b, a);
+        }
+    }
+
+    private void renderQCriterionIsoSurface(VertexConsumer buffer, PoseStack matrices, QCriterionIsoField field) {
+        var entry = matrices.last();
+        Matrix4f matrix = entry.pose();
+        float norm = field.maxQ() > field.threshold()
+                ? clamp01((field.maxQ() - field.threshold()) / Math.max(field.maxQ(), 1.0e-12f))
+                : 0.35f;
+        int color = qCriterionColor(0.55f + 0.35f * norm, 0.72f);
+        int a = (color >>> 24) & 0xFF;
+        int r = (color >>> 16) & 0xFF;
+        int g = (color >>> 8) & 0xFF;
+        int b = color & 0xFF;
+        float coordinateScale = field.cellSizeBlocks();
+        float[] vertices = field.triangleVertices();
+        for (int i = 0; i + 8 < vertices.length; i += 9) {
+            float ax = vertices[i] * coordinateScale;
+            float ay = vertices[i + 1] * coordinateScale;
+            float az = vertices[i + 2] * coordinateScale;
+            float bx = vertices[i + 3] * coordinateScale;
+            float by = vertices[i + 4] * coordinateScale;
+            float bz = vertices[i + 5] * coordinateScale;
+            float cx = vertices[i + 6] * coordinateScale;
+            float cy = vertices[i + 7] * coordinateScale;
+            float cz = vertices[i + 8] * coordinateScale;
+            addQIsoLine(buffer, entry, matrix, ax, ay, az, bx, by, bz, r, g, b, a);
+            addQIsoLine(buffer, entry, matrix, bx, by, bz, cx, cy, cz, r, g, b, a);
+            addQIsoLine(buffer, entry, matrix, cx, cy, cz, ax, ay, az, r, g, b, a);
+        }
+    }
+
+    private void renderQCriterionDebugRegionOutline(VertexConsumer buffer, PoseStack matrices, QCriterionIsoField field) {
+        var entry = matrices.last();
+        Matrix4f matrix = entry.pose();
+        float s = field.atlasResolution() * field.coordinateScale();
+        int r = 96;
+        int g = 210;
+        int b = 255;
+        int a = 150;
+        addQIsoLine(buffer, entry, matrix, 0.0f, 0.0f, 0.0f, s, 0.0f, 0.0f, r, g, b, a);
+        addQIsoLine(buffer, entry, matrix, s, 0.0f, 0.0f, s, 0.0f, s, r, g, b, a);
+        addQIsoLine(buffer, entry, matrix, s, 0.0f, s, 0.0f, 0.0f, s, r, g, b, a);
+        addQIsoLine(buffer, entry, matrix, 0.0f, 0.0f, s, 0.0f, 0.0f, 0.0f, r, g, b, a);
+        addQIsoLine(buffer, entry, matrix, 0.0f, s, 0.0f, s, s, 0.0f, r, g, b, a);
+        addQIsoLine(buffer, entry, matrix, s, s, 0.0f, s, s, s, r, g, b, a);
+        addQIsoLine(buffer, entry, matrix, s, s, s, 0.0f, s, s, r, g, b, a);
+        addQIsoLine(buffer, entry, matrix, 0.0f, s, s, 0.0f, s, 0.0f, r, g, b, a);
+        addQIsoLine(buffer, entry, matrix, 0.0f, 0.0f, 0.0f, 0.0f, s, 0.0f, r, g, b, a);
+        addQIsoLine(buffer, entry, matrix, s, 0.0f, 0.0f, s, s, 0.0f, r, g, b, a);
+        addQIsoLine(buffer, entry, matrix, s, 0.0f, s, s, s, s, r, g, b, a);
+        addQIsoLine(buffer, entry, matrix, 0.0f, 0.0f, s, 0.0f, s, s, r, g, b, a);
+    }
+
+    private void addQIsoLine(
+            VertexConsumer buffer,
+            PoseStack.Pose entry,
+            Matrix4f matrix,
+            float x0,
+            float y0,
+            float z0,
+            float x1,
+            float y1,
+            float z1,
+            int r,
+            int g,
+            int b,
+            int a
+    ) {
+        buffer.addVertex(matrix, x0, y0, z0)
+                .setColor(r, g, b, a)
+                .setNormal(entry, 0.0f, 1.0f, 0.0f)
+                /*? if >=1.21.11 {*/.setLineWidth(2.0f)/*?}*/;
+        buffer.addVertex(matrix, x1, y1, z1)
+                .setColor(r, g, b, a)
+                .setNormal(entry, 0.0f, 1.0f, 0.0f)
+                /*? if >=1.21.11 {*/.setLineWidth(2.0f)/*?}*/;
+    }
+
+    private static float[] buildDebugQIsoSphereTriangles(int sizeBlocks) {
+        int rings = 6;
+        int segments = 12;
+        float[] vertices = new float[rings * segments * 2 * 9];
+        float center = sizeBlocks * 0.5f;
+        float radius = Mth.clamp(
+                sizeBlocks * DEBUG_Q_ISO_MARKER_RADIUS_FRACTION,
+                1.0f,
+                DEBUG_Q_ISO_MARKER_MAX_RADIUS
+        );
+        int cursor = 0;
+        for (int ring = 0; ring < rings; ring++) {
+            float theta0 = (float) Math.PI * ring / rings;
+            float theta1 = (float) Math.PI * (ring + 1) / rings;
+            for (int segment = 0; segment < segments; segment++) {
+                float phi0 = (float) (Math.PI * 2.0) * segment / segments;
+                float phi1 = (float) (Math.PI * 2.0) * (segment + 1) / segments;
+                float[] p00 = spherePoint(center, radius, theta0, phi0);
+                float[] p10 = spherePoint(center, radius, theta1, phi0);
+                float[] p11 = spherePoint(center, radius, theta1, phi1);
+                float[] p01 = spherePoint(center, radius, theta0, phi1);
+                cursor = appendDebugTriangle(vertices, cursor, p00, p10, p11);
+                cursor = appendDebugTriangle(vertices, cursor, p00, p11, p01);
+            }
+        }
+        return cursor == vertices.length ? vertices : java.util.Arrays.copyOf(vertices, cursor);
+    }
+
+    private static float[] spherePoint(float center, float radius, float theta, float phi) {
+        float sinTheta = Mth.sin(theta);
+        return new float[] {
+                center + radius * sinTheta * Mth.cos(phi),
+                center + radius * Mth.cos(theta),
+                center + radius * sinTheta * Mth.sin(phi)
+        };
+    }
+
+    private static int appendDebugTriangle(float[] vertices, int cursor, float[] a, float[] b, float[] c) {
+        cursor = appendDebugPoint(vertices, cursor, a);
+        cursor = appendDebugPoint(vertices, cursor, b);
+        return appendDebugPoint(vertices, cursor, c);
+    }
+
+    private static int appendDebugPoint(float[] vertices, int cursor, float[] point) {
+        vertices[cursor++] = point[0];
+        vertices[cursor++] = point[1];
+        vertices[cursor++] = point[2];
+        return cursor;
     }
 
     private void renderVelocityField(VertexConsumer buffer, PoseStack matrices, RemoteFlowField field) {
@@ -859,6 +1279,25 @@ public final class AeroVisualizer {
         return argb(alpha, r, g, b);
     }
 
+    private static int qCriterionColor(float value, float alpha) {
+        float t = clamp01(value);
+        float r;
+        float g;
+        float b;
+        if (t < 0.50f) {
+            float u = t / 0.50f;
+            r = lerp(0.08f, 0.10f, u);
+            g = lerp(0.68f, 0.95f, u);
+            b = lerp(0.92f, 0.72f, u);
+        } else {
+            float u = (t - 0.50f) / 0.50f;
+            r = lerp(0.10f, 1.00f, u);
+            g = lerp(0.95f, 0.30f, u);
+            b = lerp(0.72f, 0.10f, u);
+        }
+        return argb(alpha, r, g, b);
+    }
+
     private static int viridisColor(float value, float alpha) {
         float t = clamp01(value);
         float[] c0;
@@ -963,6 +1402,38 @@ public final class AeroVisualizer {
             float mean = sum / Math.max(1, sampleCount);
             float colorRange = Math.max(Math.max(p80, mean * 1.15f), max * 0.12f);
             return new SliceStats(max, mean, p95, colorRange);
+        }
+    }
+
+    private record QCriterionIsoField(
+            Identifier dimensionId,
+            BlockPos origin,
+            int sampleStride,
+            int atlasResolution,
+            int[] packedPoints,
+            float[] triangleVertices,
+            int[] packedSolidVoxels,
+            float cellSizeBlocks,
+            float threshold,
+            float maxQ,
+            int positiveSamples,
+            boolean debug,
+            long lastUpdatedTick
+    ) {
+        float coordinateScale() {
+            return sampleStride * cellSizeBlocks;
+        }
+
+        AABB regionBox() {
+            double span = atlasResolution * (double) coordinateScale();
+            return new AABB(
+                    origin.getX(),
+                    origin.getY(),
+                    origin.getZ(),
+                    origin.getX() + span,
+                    origin.getY() + span,
+                    origin.getZ() + span
+            );
         }
     }
 

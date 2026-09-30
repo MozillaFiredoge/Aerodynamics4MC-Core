@@ -1,6 +1,7 @@
 package com.aerodynamics4mc.runtime;
 
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 
 public final class NativeSimulationBridge {
     public static final int FLOW_STATE_CHANNELS = 4;
@@ -14,6 +15,7 @@ public final class NativeSimulationBridge {
     public static final int BRICK_HINT_COORDS_PER_BRICK = 3;
     public static final int BRICK_RUNTIME_STATUS_FIELDS = 8;
     public static final int WIND_TUNNEL_FORCE_MOMENT_FLOATS = 12;
+    private static final int WIND_TUNNEL_Q_ISO_STATS_FIELDS = 5;
     public static final int REALTIME_SOLVER_AUTO = 0;
     public static final int REALTIME_SOLVER_CLASSIC_D3Q27 = 1;
     public static final int REALTIME_SOLVER_COMPACT_EXPERIMENTAL = 2;
@@ -37,6 +39,8 @@ public final class NativeSimulationBridge {
     private static volatile boolean nestedFeedbackStatusSupported = true;
     private static volatile boolean exactActiveHintsSupported = true;
     private static volatile boolean packedBrickAtlasSupported = true;
+    private static volatile boolean windTunnelQCriterionIsoSupported = true;
+    private static volatile boolean windTunnelQCriterionIsoTrianglesSupported = true;
 
     static {
         boolean loaded = false;
@@ -1271,6 +1275,113 @@ public final class NativeSimulationBridge {
             && nativeExtractWindTunnelFlowAtlas(solverHandle, sampleStride, outFlowAtlas);
     }
 
+    public WindTunnelQCriterionIsoPoints extractWindTunnelQCriterionIsoPoints(
+        long solverHandle,
+        int nx,
+        int ny,
+        int nz,
+        int sampleStride,
+        float threshold,
+        float thresholdFraction,
+        float qScale,
+        int maxPoints
+    ) {
+        if (!LOADED
+            || !windTunnelQCriterionIsoSupported
+            || solverHandle == 0L
+            || sampleStride <= 0
+            || maxPoints <= 0
+            || checkedCellCount(nx, ny, nz) <= 0
+            || !Float.isFinite(threshold) || threshold < 0.0f
+            || !Float.isFinite(thresholdFraction) || thresholdFraction < 0.0f
+            || !Float.isFinite(qScale) || qScale <= 0.0f) {
+            return null;
+        }
+        int[] packedPoints = new int[maxPoints];
+        int[] stats = new int[WIND_TUNNEL_Q_ISO_STATS_FIELDS];
+        final boolean ok;
+        try {
+            ok = nativeExtractWindTunnelQCriterionIsoPoints(
+                solverHandle,
+                sampleStride,
+                threshold,
+                thresholdFraction,
+                qScale,
+                packedPoints,
+                stats
+            );
+        } catch (UnsatisfiedLinkError error) {
+            windTunnelQCriterionIsoSupported = false;
+            return null;
+        }
+        if (!ok) {
+            return null;
+        }
+        int count = Math.max(0, Math.min(stats[0], maxPoints));
+        float invScale = 1.0f / qScale;
+        return new WindTunnelQCriterionIsoPoints(
+            Arrays.copyOf(packedPoints, count),
+            stats[3] * invScale,
+            stats[2] * invScale,
+            Math.max(0, stats[1]),
+            Math.max(0, stats[4])
+        );
+    }
+
+    public WindTunnelQCriterionIsoTriangles extractWindTunnelQCriterionIsoTriangles(
+        long solverHandle,
+        int nx,
+        int ny,
+        int nz,
+        int sampleStride,
+        float threshold,
+        float thresholdFraction,
+        float qScale,
+        int maxTriangles
+    ) {
+        if (!LOADED
+            || !windTunnelQCriterionIsoTrianglesSupported
+            || solverHandle == 0L
+            || sampleStride <= 0
+            || maxTriangles <= 0
+            || maxTriangles > Integer.MAX_VALUE / 9
+            || checkedCellCount(nx, ny, nz) <= 0
+            || !Float.isFinite(threshold) || threshold < 0.0f
+            || !Float.isFinite(thresholdFraction) || thresholdFraction < 0.0f
+            || !Float.isFinite(qScale) || qScale <= 0.0f) {
+            return null;
+        }
+        float[] triangleVertices = new float[maxTriangles * 9];
+        int[] stats = new int[WIND_TUNNEL_Q_ISO_STATS_FIELDS];
+        final boolean ok;
+        try {
+            ok = nativeExtractWindTunnelQCriterionIsoTriangles(
+                solverHandle,
+                sampleStride,
+                threshold,
+                thresholdFraction,
+                qScale,
+                triangleVertices,
+                stats
+            );
+        } catch (UnsatisfiedLinkError error) {
+            windTunnelQCriterionIsoTrianglesSupported = false;
+            return null;
+        }
+        if (!ok) {
+            return null;
+        }
+        int count = Math.max(0, Math.min(stats[0], maxTriangles));
+        float invScale = 1.0f / qScale;
+        return new WindTunnelQCriterionIsoTriangles(
+            Arrays.copyOf(triangleVertices, count * 9),
+            stats[3] * invScale,
+            stats[2] * invScale,
+            Math.max(0, stats[1]),
+            Math.max(0, stats[4])
+        );
+    }
+
     public WindTunnelForceMoment computeWindTunnelForceMoment(
         long solverHandle,
         float referenceX,
@@ -1368,6 +1479,24 @@ public final class NativeSimulationBridge {
         float referenceX,
         float referenceY,
         float referenceZ
+    ) {
+    }
+
+    public record WindTunnelQCriterionIsoPoints(
+        int[] packedPoints,
+        float threshold,
+        float maxQ,
+        int positiveSamples,
+        int aboveThresholdSamples
+    ) {
+    }
+
+    public record WindTunnelQCriterionIsoTriangles(
+        float[] triangleVertices,
+        float threshold,
+        float maxQ,
+        int positiveSamples,
+        int emittedTriangles
     ) {
     }
 
@@ -1818,6 +1947,26 @@ public final class NativeSimulationBridge {
         long solverHandle,
         int sampleStride,
         float[] outFlowAtlas
+    );
+
+    private static native boolean nativeExtractWindTunnelQCriterionIsoPoints(
+        long solverHandle,
+        int sampleStride,
+        float threshold,
+        float thresholdFraction,
+        float qScale,
+        int[] outPoints,
+        int[] outStats
+    );
+
+    private static native boolean nativeExtractWindTunnelQCriterionIsoTriangles(
+        long solverHandle,
+        int sampleStride,
+        float threshold,
+        float thresholdFraction,
+        float qScale,
+        float[] outVertices,
+        int[] outStats
     );
 
     private static native boolean nativeComputeWindTunnelForceMoment(

@@ -13,6 +13,8 @@ import com.aerodynamics4mc.api.AeroWindApi;
 import com.aerodynamics4mc.api.GameplayWindSample;
 import com.aerodynamics4mc.api.SamplePolicy;
 import dev.ryanhcode.sable.api.block.BlockSubLevelLiftProvider;
+import dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer;
+import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.companion.math.Pose3d;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import net.minecraft.core.BlockPos;
@@ -29,10 +31,8 @@ import org.joml.Vector3d;
 import org.joml.Vector3dc;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -1719,25 +1719,10 @@ public final class CreateAeronauticsFlightPolarService {
 	}
 
 	private static List<Object> allServerSubLevels(ServerLevel world) {
-		try {
-			Class<?> containerClass = Class.forName(
-					"dev.ryanhcode.sable.api.sublevel.SubLevelContainer",
-					false,
-					CreateAeronauticsFlightPolarService.class.getClassLoader()
-			);
-			Object container = invokeStaticContainer(containerClass, world);
-			if (container == null) {
-				return List.of();
-			}
-			Method method = container.getClass().getMethod("getAllSubLevels");
-			Object value = method.invoke(container);
-			if (value instanceof Collection<?> collection) {
-				return List.copyOf(collection);
-			}
-			return List.of();
-		} catch (ReflectiveOperationException | LinkageError ignored) {
-			return List.of();
-		}
+		// Reflecting on this class also resolves its client-only getContainer overload.
+		// Call the ServerLevel overload directly so dedicated servers never load ClientLevel.
+		ServerSubLevelContainer container = SubLevelContainer.getContainer(world);
+		return container == null ? List.of() : List.copyOf(container.getAllSubLevels());
 	}
 
 	private static boolean isServerSubLevelObject(Object subLevel) throws ClassNotFoundException {
@@ -1747,20 +1732,6 @@ public final class CreateAeronauticsFlightPolarService {
 				CreateAeronauticsFlightPolarService.class.getClassLoader()
 		);
 		return serverSubLevelClass.isInstance(subLevel);
-	}
-
-	private static Object invokeStaticContainer(Class<?> containerClass, ServerLevel world)
-			throws InvocationTargetException, IllegalAccessException {
-		for (Method method : containerClass.getMethods()) {
-			if (!method.getName().equals("getContainer") || method.getParameterCount() != 1) {
-				continue;
-			}
-			if (!method.getParameterTypes()[0].isAssignableFrom(world.getClass())) {
-				continue;
-			}
-			return method.invoke(null, world);
-		}
-		return null;
 	}
 
 	private static boolean isRemoved(Object subLevel) {

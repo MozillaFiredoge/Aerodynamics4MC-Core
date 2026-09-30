@@ -4,6 +4,25 @@ This document is the release-facing roadmap for Aerodynamics4MC. It defines what
 
 Target first public stable release: **v0.1 on 2026-05-04**.
 
+## v0.2.2: Compatibility fixes
+
+- #15: Call Sable's server-side sublevel container overload directly. Reflecting over all
+  overloads resolved `ClientLevel` on dedicated servers and caused a distribution error.
+- #16: Apply wind to FBP replacement flame and smoke particles after their overridden ticks,
+  including horizontal movement for FBP flame and support for its freeze setting. Add client
+  particle class whitelist/blacklist rules, keeping existing particle coverage by default.
+- #18: Expose a Minecraft-free coarse terrain provider API with explicit ownership, validation,
+  registration handles and L0/L1 cache invalidation. Custom world generators such as Skyforge
+  must register their terrain provider to use this API.
+
+Configuration and integration examples: [Wind Sampling API](wind-sampling-api.md).
+
+Validation completed for these changes: all three platform builds (NeoForge 1.21.1,
+NeoForge 1.21.11, Fabric 1.21.11), terrain API and particle rule contract checks, a real
+NeoForge 1.21.1 server test of L0/L1 terrain changes and fallback restoration, and client
+tests with and without FBP 21.1.6.0. FBP runtime behavior on 1.21.11 and Skyforge's own
+integration still need validation in those mod combinations.
+
 ## Product Definition
 
 Aerodynamics4MC is a Minecraft weather and airflow mod that makes wind observable, predictable, and usable as a gameplay resource.

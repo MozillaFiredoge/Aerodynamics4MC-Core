@@ -57,6 +57,7 @@ public final class AeroClientMod implements AeroClientWindRuntimeProvider {
 	}
 
 	public void onInitializeClient() {
+		ParticleWindConfig.load();
 		ClientPacketHandler.register(AeroClientMod::handleClientPacket);
 		clientL2Solver.initialize();
 	}
@@ -65,6 +66,7 @@ public final class AeroClientMod implements AeroClientWindRuntimeProvider {
 		return Component.literal(
 				"Render vectors=" + visualizer.renderVelocityVectorsEnabled()
 						+ " streamlines=" + visualizer.renderStreamlinesEnabled()
+						+ " qIso=" + visualizer.renderQCriterionIsoEnabled()
 		);
 	}
 

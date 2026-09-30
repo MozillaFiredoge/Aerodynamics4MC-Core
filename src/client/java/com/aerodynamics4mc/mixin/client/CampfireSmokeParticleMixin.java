@@ -1,6 +1,7 @@
 package com.aerodynamics4mc.mixin.client;
 
 import com.aerodynamics4mc.client.ParticleWindController;
+import com.aerodynamics4mc.client.ParticleWindConfig;
 
 import net.minecraft.client.particle.CampfireSmokeParticle;
 import net.minecraft.world.phys.Vec3;
@@ -13,6 +14,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 abstract class CampfireSmokeParticleMixin {
     @Inject(method = "tick", at = @At("TAIL"))
     private void a4mc$applyCampfireWind(CallbackInfo ci) {
+        if (!ParticleWindConfig.allowsBuiltIn(this)) return;
         ParticleAccessor accessor = (ParticleAccessor) this;
         Vec3 next = ParticleWindController.applyCampfireSmoke(
                 accessor.a4mc$getWorld(),

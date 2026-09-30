@@ -17,6 +17,16 @@ java {
     withJavadocJar()
 }
 
+val verifyIntegrationContracts by tasks.registering(Exec::class) {
+    group = "verification"
+    description = "Checks terrain provider and particle selection contracts without Minecraft."
+    commandLine("python3", rootProject.file("tools/check-integration-contracts.py"))
+}
+
+tasks.named("check") {
+    dependsOn(verifyIntegrationContracts)
+}
+
 publishing {
     publications {
         create<MavenPublication>("mavenJava") {

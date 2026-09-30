@@ -747,6 +747,21 @@ std::string wind_tunnel_solver_error(const char* prefix) {
     return message;
 }
 
+bool copy_ints_to_java_array(JNIEnv* env, jintArray target, const int* source, jsize count) {
+    if (!target || count < 0 || (count > 0 && !source)) {
+        return false;
+    }
+    if (count == 0) {
+        return true;
+    }
+    std::vector<jint> converted(static_cast<std::size_t>(count));
+    for (jsize i = 0; i < count; ++i) {
+        converted[static_cast<std::size_t>(i)] = static_cast<jint>(source[static_cast<std::size_t>(i)]);
+    }
+    env->SetIntArrayRegion(target, 0, count, converted.data());
+    return !env->ExceptionCheck();
+}
+
 enum BoundaryFaceIndex {
     kFaceXMin = 0,
     kFaceXMax = 1,
@@ -2694,6 +2709,9 @@ struct OpenClRuntime {
     cl_kernel k_compact_output_strided = nullptr;
     cl_kernel k_output = nullptr;
     cl_kernel k_output_strided = nullptr;
+    cl_kernel k_q_criterion_stats_from_flow_atlas = nullptr;
+    cl_kernel k_q_criterion_emit_points_from_flow_atlas = nullptr;
+    cl_kernel k_q_criterion_emit_triangles_from_flow_atlas = nullptr;
 };
 
 OpenClRuntime g_opencl;
@@ -4964,6 +4982,307 @@ kernel void d3q27_f16_output_macro_strided(
 
 )CLC",
 R"CLC(
+inline int q_flow_base(int x, int y, int z, int sy, int sz) {
+    return ((x * sy + y) * sz + z) * 4;
+}
+
+inline float3 q_flow_velocity(__global const float* flow, int x, int y, int z, int sy, int sz) {
+    int base = q_flow_base(x, y, z, sy, sz);
+    return (float3)(flow[base + 0], flow[base + 1], flow[base + 2]);
+}
+
+inline float q_criterion_from_flow_atlas(
+    __global const float* flow,
+    int x,
+    int y,
+    int z,
+    int sy,
+    int sz,
+    float inv_two_dx
+) {
+    float3 xp = q_flow_velocity(flow, x + 1, y, z, sy, sz);
+    float3 xm = q_flow_velocity(flow, x - 1, y, z, sy, sz);
+    float3 yp = q_flow_velocity(flow, x, y + 1, z, sy, sz);
+    float3 ym = q_flow_velocity(flow, x, y - 1, z, sy, sz);
+    float3 zp = q_flow_velocity(flow, x, y, z + 1, sy, sz);
+    float3 zm = q_flow_velocity(flow, x, y, z - 1, sy, sz);
+
+    float du_dx = (xp.x - xm.x) * inv_two_dx;
+    float du_dy = (yp.x - ym.x) * inv_two_dx;
+    float du_dz = (zp.x - zm.x) * inv_two_dx;
+    float dv_dx = (xp.y - xm.y) * inv_two_dx;
+    float dv_dy = (yp.y - ym.y) * inv_two_dx;
+    float dv_dz = (zp.y - zm.y) * inv_two_dx;
+    float dw_dx = (xp.z - xm.z) * inv_two_dx;
+    float dw_dy = (yp.z - ym.z) * inv_two_dx;
+    float dw_dz = (zp.z - zm.z) * inv_two_dx;
+
+    float s11 = du_dx;
+    float s22 = dv_dy;
+    float s33 = dw_dz;
+    float s12 = 0.5f * (du_dy + dv_dx);
+    float s13 = 0.5f * (du_dz + dw_dx);
+    float s23 = 0.5f * (dv_dz + dw_dy);
+
+    float o12 = 0.5f * (du_dy - dv_dx);
+    float o13 = 0.5f * (du_dz - dw_dx);
+    float o23 = 0.5f * (dv_dz - dw_dy);
+
+    float strain_norm2 = s11 * s11 + s22 * s22 + s33 * s33
+        + 2.0f * (s12 * s12 + s13 * s13 + s23 * s23);
+    float rotation_norm2 = 2.0f * (o12 * o12 + o13 * o13 + o23 * o23);
+    float q = 0.5f * (rotation_norm2 - strain_norm2);
+    return isfinite(q) ? q : 0.0f;
+}
+
+inline uint q_criterion_scaled(float q, float q_scale) {
+    if (!isfinite(q) || q <= 0.0f) return 0u;
+    return (uint)clamp(q * q_scale, 0.0f, 2147483520.0f);
+}
+
+__constant int Q_CUBE_OFFSETS[24] = {
+    0, 0, 0,
+    1, 0, 0,
+    1, 1, 0,
+    0, 1, 0,
+    0, 0, 1,
+    1, 0, 1,
+    1, 1, 1,
+    0, 1, 1
+};
+
+__constant int Q_TETRAS[24] = {
+    0, 5, 1, 6,
+    0, 1, 2, 6,
+    0, 2, 3, 6,
+    0, 3, 7, 6,
+    0, 7, 4, 6,
+    0, 4, 5, 6
+};
+
+inline void q_iso_intersection(
+    __private const uint* values,
+    __private const float* positions,
+    int a,
+    int b,
+    uint threshold_scaled,
+    __private float* points,
+    int point_index
+) {
+    float value_a = (float)values[a];
+    float value_b = (float)values[b];
+    float denom = value_b - value_a;
+    float t = fabs(denom) <= 1.0e-6f ? 0.5f : (((float)threshold_scaled - value_a) / denom);
+    t = clamp(t, 0.0f, 1.0f);
+    int a_base = a * 3;
+    int b_base = b * 3;
+    int dst = point_index * 3;
+    points[dst + 0] = positions[a_base + 0] + (positions[b_base + 0] - positions[a_base + 0]) * t;
+    points[dst + 1] = positions[a_base + 1] + (positions[b_base + 1] - positions[a_base + 1]) * t;
+    points[dst + 2] = positions[a_base + 2] + (positions[b_base + 2] - positions[a_base + 2]) * t;
+}
+
+inline void q_iso_emit_triangle(
+    __private const float* points,
+    int a,
+    int b,
+    int c,
+    uint triangle_capacity,
+    __global uint* stats,
+    __global float* vertices
+) {
+    uint slot = atomic_inc((volatile __global uint*)&stats[2]);
+    if (slot >= triangle_capacity) return;
+    int dst = (int)slot * 9;
+    int a_base = a * 3;
+    int b_base = b * 3;
+    int c_base = c * 3;
+    vertices[dst + 0] = points[a_base + 0];
+    vertices[dst + 1] = points[a_base + 1];
+    vertices[dst + 2] = points[a_base + 2];
+    vertices[dst + 3] = points[b_base + 0];
+    vertices[dst + 4] = points[b_base + 1];
+    vertices[dst + 5] = points[b_base + 2];
+    vertices[dst + 6] = points[c_base + 0];
+    vertices[dst + 7] = points[c_base + 1];
+    vertices[dst + 8] = points[c_base + 2];
+}
+
+inline void q_iso_emit_tetra(
+    __private const uint* values,
+    __private const float* positions,
+    uint threshold_scaled,
+    uint triangle_capacity,
+    __global uint* stats,
+    __global float* vertices
+) {
+    int inside[4];
+    int outside[4];
+    int inside_count = 0;
+    int outside_count = 0;
+    for (int i = 0; i < 4; ++i) {
+        if (values[i] > threshold_scaled) {
+            inside[inside_count++] = i;
+        } else {
+            outside[outside_count++] = i;
+        }
+    }
+    if (inside_count == 0 || inside_count == 4) return;
+
+    float points[12];
+    if (inside_count == 1) {
+        int i0 = inside[0];
+        q_iso_intersection(values, positions, i0, outside[0], threshold_scaled, points, 0);
+        q_iso_intersection(values, positions, i0, outside[1], threshold_scaled, points, 1);
+        q_iso_intersection(values, positions, i0, outside[2], threshold_scaled, points, 2);
+        q_iso_emit_triangle(points, 0, 1, 2, triangle_capacity, stats, vertices);
+        return;
+    }
+    if (inside_count == 3) {
+        int o0 = outside[0];
+        q_iso_intersection(values, positions, o0, inside[0], threshold_scaled, points, 0);
+        q_iso_intersection(values, positions, o0, inside[1], threshold_scaled, points, 1);
+        q_iso_intersection(values, positions, o0, inside[2], threshold_scaled, points, 2);
+        q_iso_emit_triangle(points, 0, 2, 1, triangle_capacity, stats, vertices);
+        return;
+    }
+
+    int i0 = inside[0];
+    int i1 = inside[1];
+    int o0 = outside[0];
+    int o1 = outside[1];
+    q_iso_intersection(values, positions, i0, o0, threshold_scaled, points, 0);
+    q_iso_intersection(values, positions, i1, o0, threshold_scaled, points, 1);
+    q_iso_intersection(values, positions, i1, o1, threshold_scaled, points, 2);
+    q_iso_intersection(values, positions, i0, o1, threshold_scaled, points, 3);
+    q_iso_emit_triangle(points, 0, 1, 2, triangle_capacity, stats, vertices);
+    q_iso_emit_triangle(points, 0, 2, 3, triangle_capacity, stats, vertices);
+}
+
+kernel void q_criterion_stats_from_flow_atlas(
+    __global const float* flow,
+    int sx,
+    int sy,
+    int sz,
+    float inv_two_dx,
+    float q_scale,
+    __global uint* stats
+) {
+    int atlas_cell = (int)get_global_id(0);
+    int atlas_cells = sx * sy * sz;
+    if (atlas_cell >= atlas_cells) return;
+
+    int ayz = sy * sz;
+    int x = atlas_cell / ayz;
+    int rem = atlas_cell - x * ayz;
+    int y = rem / sz;
+    int z = rem - y * sz;
+    if (x <= 0 || y <= 0 || z <= 0 || x >= sx - 1 || y >= sy - 1 || z >= sz - 1) return;
+
+    uint q_scaled = q_criterion_scaled(q_criterion_from_flow_atlas(flow, x, y, z, sy, sz, inv_two_dx), q_scale);
+    if (q_scaled == 0u) return;
+    atomic_inc((volatile __global uint*)&stats[1]);
+    atomic_max((volatile __global uint*)&stats[0], q_scaled);
+}
+
+kernel void q_criterion_emit_points_from_flow_atlas(
+    __global const float* flow,
+    int sx,
+    int sy,
+    int sz,
+    float inv_two_dx,
+    float q_scale,
+    uint threshold_scaled,
+    uint max_scaled,
+    uint point_capacity,
+    __global uint* stats,
+    __global uint* points
+) {
+    int atlas_cell = (int)get_global_id(0);
+    int atlas_cells = sx * sy * sz;
+    if (atlas_cell >= atlas_cells) return;
+
+    int ayz = sy * sz;
+    int x = atlas_cell / ayz;
+    int rem = atlas_cell - x * ayz;
+    int y = rem / sz;
+    int z = rem - y * sz;
+    if (x <= 0 || y <= 0 || z <= 0 || x >= sx - 1 || y >= sy - 1 || z >= sz - 1) return;
+
+    uint q_scaled = q_criterion_scaled(q_criterion_from_flow_atlas(flow, x, y, z, sy, sz, inv_two_dx), q_scale);
+    if (q_scaled <= threshold_scaled) return;
+
+    uint slot = atomic_inc((volatile __global uint*)&stats[2]);
+    if (slot >= point_capacity) return;
+
+    uint denom = max(max_scaled - threshold_scaled, 1u);
+    uint strength = clamp((uint)(((float)(q_scaled - threshold_scaled) / (float)denom) * 255.0f), 1u, 255u);
+    points[slot] = ((uint)x & 255u)
+        | (((uint)y & 255u) << 8)
+        | (((uint)z & 255u) << 16)
+        | ((strength & 255u) << 24);
+}
+
+kernel void q_criterion_emit_triangles_from_flow_atlas(
+    __global const float* flow,
+    int sx,
+    int sy,
+    int sz,
+    int sample_stride,
+    float inv_two_dx,
+    float q_scale,
+    uint threshold_scaled,
+    uint triangle_capacity,
+    __global uint* stats,
+    __global float* vertices
+) {
+    int cube_sx = sx - 3;
+    int cube_sy = sy - 3;
+    int cube_sz = sz - 3;
+    if (cube_sx <= 0 || cube_sy <= 0 || cube_sz <= 0) return;
+    int cube_count = cube_sx * cube_sy * cube_sz;
+    int cube_cell = (int)get_global_id(0);
+    if (cube_cell >= cube_count) return;
+
+    int ayz = cube_sy * cube_sz;
+    int x = 1 + cube_cell / ayz;
+    int rem = cube_cell - (x - 1) * ayz;
+    int y = 1 + rem / cube_sz;
+    int z = 1 + rem - (y - 1) * cube_sz;
+
+    uint cube_values[8];
+    uint min_value = 2147483520u;
+    uint max_value = 0u;
+    for (int vertex = 0; vertex < 8; ++vertex) {
+        int offset = vertex * 3;
+        int vx = x + Q_CUBE_OFFSETS[offset + 0];
+        int vy = y + Q_CUBE_OFFSETS[offset + 1];
+        int vz = z + Q_CUBE_OFFSETS[offset + 2];
+        uint q = q_criterion_scaled(q_criterion_from_flow_atlas(flow, vx, vy, vz, sy, sz, inv_two_dx), q_scale);
+        cube_values[vertex] = q;
+        min_value = min(min_value, q);
+        max_value = max(max_value, q);
+    }
+    if (max_value <= threshold_scaled || min_value > threshold_scaled) return;
+
+    for (int tetra = 0; tetra < 24; tetra += 4) {
+        uint values[4];
+        float positions[12];
+        for (int i = 0; i < 4; ++i) {
+            int cube_vertex = Q_TETRAS[tetra + i];
+            int cube_offset = cube_vertex * 3;
+            int dst = i * 3;
+            values[i] = cube_values[cube_vertex];
+            positions[dst + 0] = (float)((x + Q_CUBE_OFFSETS[cube_offset + 0]) * sample_stride);
+            positions[dst + 1] = (float)((y + Q_CUBE_OFFSETS[cube_offset + 1]) * sample_stride);
+            positions[dst + 2] = (float)((z + Q_CUBE_OFFSETS[cube_offset + 2]) * sample_stride);
+        }
+        q_iso_emit_tetra(values, positions, threshold_scaled, triangle_capacity, stats, vertices);
+    }
+}
+
+)CLC",
+R"CLC(
 inline float4 compact_neighbor_or_boundary(
     __global const ushort4* state,
     __global const uchar* solid,
@@ -5332,6 +5651,9 @@ std::string format_opencl_api_error(const char* api, cl_int err) {
 }
 
 void release_opencl_runtime() {
+    if (g_opencl.k_q_criterion_emit_triangles_from_flow_atlas) clReleaseKernel(g_opencl.k_q_criterion_emit_triangles_from_flow_atlas);
+    if (g_opencl.k_q_criterion_emit_points_from_flow_atlas) clReleaseKernel(g_opencl.k_q_criterion_emit_points_from_flow_atlas);
+    if (g_opencl.k_q_criterion_stats_from_flow_atlas) clReleaseKernel(g_opencl.k_q_criterion_stats_from_flow_atlas);
     if (g_opencl.k_output_strided) clReleaseKernel(g_opencl.k_output_strided);
     if (g_opencl.k_compact_output_strided) clReleaseKernel(g_opencl.k_compact_output_strided);
     if (g_opencl.k_compact_output) clReleaseKernel(g_opencl.k_compact_output);
@@ -5616,12 +5938,16 @@ bool initialize_opencl_runtime() {
     cl_kernel k_compact_output_strided = clCreateKernel(program, "compact_output_macro_strided", &err);
     cl_kernel k_output = clCreateKernel(program, "output_macro", &err);
     cl_kernel k_output_strided = clCreateKernel(program, "output_macro_strided", &err);
+    cl_kernel k_q_criterion_stats_from_flow_atlas = clCreateKernel(program, "q_criterion_stats_from_flow_atlas", &err);
+    cl_kernel k_q_criterion_emit_points_from_flow_atlas = clCreateKernel(program, "q_criterion_emit_points_from_flow_atlas", &err);
+    cl_kernel k_q_criterion_emit_triangles_from_flow_atlas = clCreateKernel(program, "q_criterion_emit_triangles_from_flow_atlas", &err);
 
     if (!k_init || !k_apply_temperature_reference || !k_thermal_bfecc_forward || !k_thermal_bfecc_correct || !k_thermal_bfecc_finalize
         || !k_stream_collide_tgv || !k_stream_collide_hydro_bench || !k_stream_collide_hydro_forced
         || !k_d3q27_f16_step_even || !k_d3q27_f16_step_odd || !k_d3q27_f16_patch_static || !k_d3q27_f16_reset_patched || !k_d3q27_f16_output_strided
         || !k_compact_macro_step || !k_compact_output || !k_compact_output_strided || !k_output
-        || !k_output_strided) {
+        || !k_output_strided || !k_q_criterion_stats_from_flow_atlas || !k_q_criterion_emit_points_from_flow_atlas
+        || !k_q_criterion_emit_triangles_from_flow_atlas) {
         if (k_init) clReleaseKernel(k_init);
         if (k_apply_temperature_reference) clReleaseKernel(k_apply_temperature_reference);
         if (k_thermal_bfecc_forward) clReleaseKernel(k_thermal_bfecc_forward);
@@ -5640,6 +5966,9 @@ bool initialize_opencl_runtime() {
         if (k_compact_output_strided) clReleaseKernel(k_compact_output_strided);
         if (k_output) clReleaseKernel(k_output);
         if (k_output_strided) clReleaseKernel(k_output_strided);
+        if (k_q_criterion_stats_from_flow_atlas) clReleaseKernel(k_q_criterion_stats_from_flow_atlas);
+        if (k_q_criterion_emit_points_from_flow_atlas) clReleaseKernel(k_q_criterion_emit_points_from_flow_atlas);
+        if (k_q_criterion_emit_triangles_from_flow_atlas) clReleaseKernel(k_q_criterion_emit_triangles_from_flow_atlas);
         clReleaseProgram(program); clReleaseCommandQueue(queue); clReleaseContext(context);
         g_opencl.error = "Kernel creation failed"; return false;
     }
@@ -5663,6 +5992,9 @@ bool initialize_opencl_runtime() {
     g_opencl.k_compact_output_strided = k_compact_output_strided;
     g_opencl.k_output = k_output;
     g_opencl.k_output_strided = k_output_strided;
+    g_opencl.k_q_criterion_stats_from_flow_atlas = k_q_criterion_stats_from_flow_atlas;
+    g_opencl.k_q_criterion_emit_points_from_flow_atlas = k_q_criterion_emit_points_from_flow_atlas;
+    g_opencl.k_q_criterion_emit_triangles_from_flow_atlas = k_q_criterion_emit_triangles_from_flow_atlas;
     g_opencl.platform = selected_platform; g_opencl.device = selected_device;
     g_opencl.available = true; g_opencl.device_name = read_device_name(selected_device);
     return true;
@@ -5744,7 +6076,7 @@ bool ensure_classic_output_buffer(ContextState& ctx, std::size_t output_bytes) {
         ctx.classic_output_bytes = 0;
     }
     cl_int err = CL_SUCCESS;
-    ctx.d_output = clCreateBuffer(g_opencl.context, CL_MEM_WRITE_ONLY, output_bytes, nullptr, &err);
+    ctx.d_output = clCreateBuffer(g_opencl.context, CL_MEM_READ_WRITE, output_bytes, nullptr, &err);
     if (err != CL_SUCCESS || !ctx.d_output) {
         g_opencl.error = format_opencl_api_error("clCreateBuffer(d_output)", err);
         return false;
@@ -5930,7 +6262,7 @@ bool ensure_d3q27_f16_output_buffer(ContextState& ctx, std::size_t output_bytes)
         ctx.d3q27_f16_output_bytes = 0;
     }
     cl_int err = CL_SUCCESS;
-    ctx.d_d3q27_f16_output = clCreateBuffer(g_opencl.context, CL_MEM_WRITE_ONLY, output_bytes, nullptr, &err);
+    ctx.d_d3q27_f16_output = clCreateBuffer(g_opencl.context, CL_MEM_READ_WRITE, output_bytes, nullptr, &err);
     if (err != CL_SUCCESS || !ctx.d_d3q27_f16_output) {
         g_opencl.error = format_opencl_api_error("clCreateBuffer(d_d3q27_f16_output)", err);
         return false;
@@ -6718,7 +7050,7 @@ bool ensure_compact_output_buffer(ContextState& ctx, std::size_t output_bytes) {
         ctx.compact_output_ready = false;
     }
     cl_int err = CL_SUCCESS;
-    ctx.d_compact_output = clCreateBuffer(g_opencl.context, CL_MEM_WRITE_ONLY, output_bytes, nullptr, &err);
+    ctx.d_compact_output = clCreateBuffer(g_opencl.context, CL_MEM_READ_WRITE, output_bytes, nullptr, &err);
     if (err != CL_SUCCESS || !ctx.d_compact_output) {
         g_opencl.error = format_opencl_api_error("clCreateBuffer(d_compact_output)", err);
         return false;
@@ -9553,6 +9885,567 @@ static bool native_sample_flow_point_raw_dims_impl(
     return true;
 }
 
+#if defined(AERO_LBM_OPENCL)
+static bool native_write_flow_atlas_to_opencl_buffer(
+    ContextState& ctx,
+    int stride,
+    int sx,
+    int sy,
+    int sz,
+    int value_count,
+    cl_mem* out_buffer
+) {
+    if (!g_cfg.opencl_enabled || !out_buffer || stride <= 0 || sx <= 0 || sy <= 0 || sz <= 0) {
+        return false;
+    }
+    const int atlas_cells = sx * sy * sz;
+    if (atlas_cells <= 0 || value_count != atlas_cells * 4) {
+        return false;
+    }
+    const std::size_t bytes = static_cast<std::size_t>(value_count) * sizeof(float);
+
+    if (ctx.d3q27_f16_buffers_ready && ctx.d3q27_f16_initialized) {
+        if (!ensure_d3q27_f16_output_buffer(ctx, bytes)) {
+            return false;
+        }
+        const int parity = ctx.d3q27_f16_parity;
+        const int out_ch = 4;
+        const float output_velocity_scale = 1.0f;
+        const OpenClFaceData output_inlet = compact_inlet_value();
+        cl_int err = CL_SUCCESS;
+        err |= clSetKernelArg(g_opencl.k_d3q27_f16_output_strided, 0, sizeof(cl_mem), &ctx.d_d3q27_f16);
+        err |= clSetKernelArg(g_opencl.k_d3q27_f16_output_strided, 1, sizeof(cl_mem), &ctx.d_d3q27_f16_solid);
+        err |= clSetKernelArg(g_opencl.k_d3q27_f16_output_strided, 2, sizeof(int), &ctx.nx);
+        err |= clSetKernelArg(g_opencl.k_d3q27_f16_output_strided, 3, sizeof(int), &ctx.ny);
+        err |= clSetKernelArg(g_opencl.k_d3q27_f16_output_strided, 4, sizeof(int), &ctx.nz);
+        err |= clSetKernelArg(g_opencl.k_d3q27_f16_output_strided, 5, sizeof(int), &stride);
+        err |= clSetKernelArg(g_opencl.k_d3q27_f16_output_strided, 6, sizeof(int), &sx);
+        err |= clSetKernelArg(g_opencl.k_d3q27_f16_output_strided, 7, sizeof(int), &sy);
+        err |= clSetKernelArg(g_opencl.k_d3q27_f16_output_strided, 8, sizeof(int), &sz);
+        err |= clSetKernelArg(g_opencl.k_d3q27_f16_output_strided, 9, sizeof(int), &out_ch);
+        err |= clSetKernelArg(g_opencl.k_d3q27_f16_output_strided, 10, sizeof(int), &parity);
+        err |= clSetKernelArg(g_opencl.k_d3q27_f16_output_strided, 11, sizeof(float), &output_velocity_scale);
+        err |= clSetKernelArg(g_opencl.k_d3q27_f16_output_strided, 12, sizeof(OpenClFaceData), output_inlet.data());
+        err |= clSetKernelArg(g_opencl.k_d3q27_f16_output_strided, 13, sizeof(cl_mem), &ctx.d_d3q27_f16_output);
+        if (err != CL_SUCCESS) {
+            g_opencl.error = format_opencl_api_error("clSetKernelArg(k_d3q27_f16_output_strided)", err);
+            return false;
+        }
+        err = enqueue_kernel_1d(g_opencl.k_d3q27_f16_output_strided, atlas_cells);
+        if (err != CL_SUCCESS) {
+            g_opencl.error = format_opencl_api_error("clEnqueueNDRangeKernel(k_d3q27_f16_output_strided)", err);
+            return false;
+        }
+        *out_buffer = ctx.d_d3q27_f16_output;
+        return true;
+    }
+
+    if (ctx.compact_buffers_ready && ctx.compact_initialized) {
+        if (!ensure_compact_output_buffer(ctx, bytes)) {
+            return false;
+        }
+        cl_mem current_state = (ctx.step_counter % 2 == 0) ? ctx.d_compact_state : ctx.d_compact_state_next;
+        cl_int err = CL_SUCCESS;
+        err |= clSetKernelArg(g_opencl.k_compact_output_strided, 0, sizeof(cl_mem), &current_state);
+        err |= clSetKernelArg(g_opencl.k_compact_output_strided, 1, sizeof(cl_mem), &ctx.d_compact_solid);
+        err |= clSetKernelArg(g_opencl.k_compact_output_strided, 2, sizeof(int), &ctx.nx);
+        err |= clSetKernelArg(g_opencl.k_compact_output_strided, 3, sizeof(int), &ctx.ny);
+        err |= clSetKernelArg(g_opencl.k_compact_output_strided, 4, sizeof(int), &ctx.nz);
+        err |= clSetKernelArg(g_opencl.k_compact_output_strided, 5, sizeof(int), &stride);
+        err |= clSetKernelArg(g_opencl.k_compact_output_strided, 6, sizeof(int), &sx);
+        err |= clSetKernelArg(g_opencl.k_compact_output_strided, 7, sizeof(int), &sy);
+        err |= clSetKernelArg(g_opencl.k_compact_output_strided, 8, sizeof(int), &sz);
+        err |= clSetKernelArg(g_opencl.k_compact_output_strided, 9, sizeof(cl_mem), &ctx.d_compact_output);
+        if (err != CL_SUCCESS) {
+            g_opencl.error = format_opencl_api_error("clSetKernelArg(k_compact_output_strided)", err);
+            return false;
+        }
+        err = enqueue_kernel_1d(g_opencl.k_compact_output_strided, atlas_cells);
+        if (err != CL_SUCCESS) {
+            g_opencl.error = format_opencl_api_error("clEnqueueNDRangeKernel(k_compact_output_strided)", err);
+            return false;
+        }
+        *out_buffer = ctx.d_compact_output;
+        return true;
+    }
+
+    if (ctx.gpu_buffers_ready && ctx.gpu_initialized) {
+        if (!ensure_classic_output_buffer(ctx, bytes)) {
+            return false;
+        }
+        cl_mem current_flow = (ctx.step_counter % 2 == 0) ? ctx.d_f : ctx.d_f_post;
+        cl_int err = CL_SUCCESS;
+        err |= clSetKernelArg(g_opencl.k_output_strided, 0, sizeof(cl_mem), &current_flow);
+        err |= clSetKernelArg(g_opencl.k_output_strided, 1, sizeof(cl_mem), &ctx.d_payload);
+        err |= clSetKernelArg(g_opencl.k_output_strided, 2, sizeof(int), &g_cfg.input_channels);
+        err |= clSetKernelArg(g_opencl.k_output_strided, 3, sizeof(int), &ctx.nx);
+        err |= clSetKernelArg(g_opencl.k_output_strided, 4, sizeof(int), &ctx.ny);
+        err |= clSetKernelArg(g_opencl.k_output_strided, 5, sizeof(int), &ctx.nz);
+        err |= clSetKernelArg(g_opencl.k_output_strided, 6, sizeof(int), &stride);
+        err |= clSetKernelArg(g_opencl.k_output_strided, 7, sizeof(int), &sx);
+        err |= clSetKernelArg(g_opencl.k_output_strided, 8, sizeof(int), &sy);
+        err |= clSetKernelArg(g_opencl.k_output_strided, 9, sizeof(int), &sz);
+        err |= clSetKernelArg(g_opencl.k_output_strided, 10, sizeof(cl_mem), &ctx.d_output);
+        if (err != CL_SUCCESS) {
+            g_opencl.error = format_opencl_api_error("clSetKernelArg(k_output_strided)", err);
+            return false;
+        }
+        err = enqueue_kernel_1d(g_opencl.k_output_strided, atlas_cells);
+        if (err != CL_SUCCESS) {
+            g_opencl.error = format_opencl_api_error("clEnqueueNDRangeKernel(k_output_strided)", err);
+            return false;
+        }
+        *out_buffer = ctx.d_output;
+        return true;
+    }
+
+    return false;
+}
+#endif
+
+static std::uint32_t q_criterion_scale_to_u31(float value, float q_scale) {
+    constexpr std::uint32_t kMaxScaledQ = 2147483520u;
+    if (!std::isfinite(value) || !std::isfinite(q_scale) || value <= 0.0f || q_scale <= 0.0f) {
+        return 0u;
+    }
+    const double scaled = static_cast<double>(value) * static_cast<double>(q_scale);
+    if (!std::isfinite(scaled) || scaled <= 0.0) {
+        return 0u;
+    }
+    if (scaled >= static_cast<double>(kMaxScaledQ)) {
+        return kMaxScaledQ;
+    }
+    return static_cast<std::uint32_t>(scaled + 0.5);
+}
+
+static bool native_extract_q_criterion_iso_points_raw_dims_impl(
+    jint nx,
+    jint ny,
+    jint nz,
+    jlong context_key,
+    jint stride,
+    float dx_meters,
+    float threshold,
+    float threshold_fraction,
+    float q_scale,
+    int* out_points,
+    jint point_capacity,
+    int* out_stats,
+    jint stats_count
+) {
+    if (!out_stats || stats_count < 5) {
+        set_last_native_error("q_criterion_iso_points: missing stats output");
+        return false;
+    }
+    for (int i = 0; i < stats_count; ++i) {
+        out_stats[i] = 0;
+    }
+    if (!g_cfg.initialized || nx <= 0 || ny <= 0 || nz <= 0 || stride <= 0) {
+        set_last_native_error("q_criterion_iso_points: invalid runtime or dimensions");
+        return false;
+    }
+    if (point_capacity < 0 || (point_capacity > 0 && !out_points)) {
+        set_last_native_error("q_criterion_iso_points: invalid point output buffer");
+        return false;
+    }
+    if (!std::isfinite(dx_meters) || dx_meters <= 0.0f
+        || !std::isfinite(threshold) || threshold < 0.0f
+        || !std::isfinite(threshold_fraction) || threshold_fraction < 0.0f
+        || !std::isfinite(q_scale) || q_scale <= 0.0f) {
+        set_last_native_error("q_criterion_iso_points: invalid threshold configuration");
+        return false;
+    }
+    const int sx = (nx + stride - 1) / stride;
+    const int sy = (ny + stride - 1) / stride;
+    const int sz = (nz + stride - 1) / stride;
+    const int64_t atlas_cells64 = static_cast<int64_t>(sx) * sy * sz;
+    if (sx < 3 || sy < 3 || sz < 3 || atlas_cells64 <= 0 || atlas_cells64 > std::numeric_limits<int>::max() / 4) {
+        return true;
+    }
+    const int atlas_cells = static_cast<int>(atlas_cells64);
+    const int value_count = atlas_cells * 4;
+    const std::size_t cells = static_cast<std::size_t>(nx) * ny * nz;
+
+    LockedContext locked_context(context_key, false);
+    if (!locked_context.ctx) {
+        set_last_native_error("q_criterion_iso_points: missing context");
+        return false;
+    }
+    ContextState& ctx = *locked_context.ctx;
+    ensure_context_shape(ctx, nx, ny, nz, cells);
+
+#if defined(AERO_LBM_OPENCL)
+    cl_mem flow_buffer = nullptr;
+    if (!native_write_flow_atlas_to_opencl_buffer(ctx, stride, sx, sy, sz, value_count, &flow_buffer)) {
+        set_last_native_error(g_opencl.error.empty() ? "q_criterion_iso_points: no OpenCL flow atlas buffer" : g_opencl.error);
+        return false;
+    }
+
+    cl_int err = CL_SUCCESS;
+    cl_mem stats_buffer = clCreateBuffer(g_opencl.context, CL_MEM_READ_WRITE, 3 * sizeof(std::uint32_t), nullptr, &err);
+    if (err != CL_SUCCESS || !stats_buffer) {
+        set_last_native_error(format_opencl_api_error("clCreateBuffer(q_iso_stats)", err));
+        return false;
+    }
+    cl_mem points_buffer = nullptr;
+    if (point_capacity > 0) {
+        points_buffer = clCreateBuffer(
+            g_opencl.context,
+            CL_MEM_READ_WRITE,
+            static_cast<std::size_t>(point_capacity) * sizeof(std::uint32_t),
+            nullptr,
+            &err
+        );
+        if (err != CL_SUCCESS || !points_buffer) {
+            clReleaseMemObject(stats_buffer);
+            set_last_native_error(format_opencl_api_error("clCreateBuffer(q_iso_points)", err));
+            return false;
+        }
+    }
+
+    auto release_buffers = [&]() {
+        if (points_buffer) {
+            clReleaseMemObject(points_buffer);
+        }
+        clReleaseMemObject(stats_buffer);
+    };
+
+    std::uint32_t stats[3] = {0u, 0u, 0u};
+    err = clEnqueueWriteBuffer(g_opencl.queue, stats_buffer, CL_TRUE, 0, sizeof(stats), stats, 0, nullptr, nullptr);
+    if (err != CL_SUCCESS) {
+        release_buffers();
+        set_last_native_error(format_opencl_api_error("clEnqueueWriteBuffer(q_iso_stats_zero)", err));
+        return false;
+    }
+
+    const float inv_two_dx = 0.5f / std::max(dx_meters * static_cast<float>(stride), 1.0e-6f);
+    err = CL_SUCCESS;
+    err |= clSetKernelArg(g_opencl.k_q_criterion_stats_from_flow_atlas, 0, sizeof(cl_mem), &flow_buffer);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_stats_from_flow_atlas, 1, sizeof(int), &sx);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_stats_from_flow_atlas, 2, sizeof(int), &sy);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_stats_from_flow_atlas, 3, sizeof(int), &sz);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_stats_from_flow_atlas, 4, sizeof(float), &inv_two_dx);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_stats_from_flow_atlas, 5, sizeof(float), &q_scale);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_stats_from_flow_atlas, 6, sizeof(cl_mem), &stats_buffer);
+    if (err != CL_SUCCESS) {
+        release_buffers();
+        set_last_native_error(format_opencl_api_error("clSetKernelArg(k_q_criterion_stats_from_flow_atlas)", err));
+        return false;
+    }
+    err = enqueue_kernel_1d(g_opencl.k_q_criterion_stats_from_flow_atlas, atlas_cells);
+    if (err != CL_SUCCESS) {
+        release_buffers();
+        set_last_native_error(format_opencl_api_error("clEnqueueNDRangeKernel(k_q_criterion_stats_from_flow_atlas)", err));
+        return false;
+    }
+    err = clEnqueueReadBuffer(g_opencl.queue, stats_buffer, CL_TRUE, 0, sizeof(stats), stats, 0, nullptr, nullptr);
+    if (err != CL_SUCCESS) {
+        release_buffers();
+        set_last_native_error(format_opencl_api_error("clEnqueueReadBuffer(q_iso_stats)", err));
+        return false;
+    }
+
+    const std::uint32_t max_scaled = stats[0];
+    const std::uint32_t positive_samples = stats[1];
+    std::uint32_t threshold_scaled = threshold > 0.0f
+        ? q_criterion_scale_to_u31(threshold, q_scale)
+        : static_cast<std::uint32_t>(
+            static_cast<double>(max_scaled) * std::min(std::max(threshold_fraction, 0.0f), 1.0f)
+        );
+    out_stats[1] = static_cast<int>(std::min<std::uint32_t>(positive_samples, static_cast<std::uint32_t>(std::numeric_limits<int>::max())));
+    out_stats[2] = static_cast<int>(max_scaled);
+    out_stats[3] = static_cast<int>(threshold_scaled);
+    if (max_scaled == 0u || positive_samples == 0u || threshold_scaled >= max_scaled || point_capacity <= 0) {
+        release_buffers();
+        return true;
+    }
+
+    stats[0] = max_scaled;
+    stats[1] = positive_samples;
+    stats[2] = 0u;
+    err = clEnqueueWriteBuffer(g_opencl.queue, stats_buffer, CL_TRUE, 0, sizeof(stats), stats, 0, nullptr, nullptr);
+    if (err != CL_SUCCESS) {
+        release_buffers();
+        set_last_native_error(format_opencl_api_error("clEnqueueWriteBuffer(q_iso_emit_stats_zero)", err));
+        return false;
+    }
+
+    const std::uint32_t point_capacity_u32 = static_cast<std::uint32_t>(point_capacity);
+    err = CL_SUCCESS;
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_points_from_flow_atlas, 0, sizeof(cl_mem), &flow_buffer);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_points_from_flow_atlas, 1, sizeof(int), &sx);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_points_from_flow_atlas, 2, sizeof(int), &sy);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_points_from_flow_atlas, 3, sizeof(int), &sz);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_points_from_flow_atlas, 4, sizeof(float), &inv_two_dx);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_points_from_flow_atlas, 5, sizeof(float), &q_scale);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_points_from_flow_atlas, 6, sizeof(std::uint32_t), &threshold_scaled);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_points_from_flow_atlas, 7, sizeof(std::uint32_t), &max_scaled);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_points_from_flow_atlas, 8, sizeof(std::uint32_t), &point_capacity_u32);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_points_from_flow_atlas, 9, sizeof(cl_mem), &stats_buffer);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_points_from_flow_atlas, 10, sizeof(cl_mem), &points_buffer);
+    if (err != CL_SUCCESS) {
+        release_buffers();
+        set_last_native_error(format_opencl_api_error("clSetKernelArg(k_q_criterion_emit_points_from_flow_atlas)", err));
+        return false;
+    }
+    err = enqueue_kernel_1d(g_opencl.k_q_criterion_emit_points_from_flow_atlas, atlas_cells);
+    if (err != CL_SUCCESS) {
+        release_buffers();
+        set_last_native_error(format_opencl_api_error("clEnqueueNDRangeKernel(k_q_criterion_emit_points_from_flow_atlas)", err));
+        return false;
+    }
+    err = clEnqueueReadBuffer(g_opencl.queue, stats_buffer, CL_TRUE, 0, sizeof(stats), stats, 0, nullptr, nullptr);
+    if (err != CL_SUCCESS) {
+        release_buffers();
+        set_last_native_error(format_opencl_api_error("clEnqueueReadBuffer(q_iso_emit_stats)", err));
+        return false;
+    }
+    const std::uint32_t above_threshold = stats[2];
+    const int copied = static_cast<int>(std::min<std::uint32_t>(above_threshold, point_capacity_u32));
+    out_stats[0] = copied;
+    out_stats[4] = static_cast<int>(std::min<std::uint32_t>(above_threshold, static_cast<std::uint32_t>(std::numeric_limits<int>::max())));
+    if (copied > 0) {
+        err = enqueue_read_buffer_chunked(points_buffer, static_cast<std::size_t>(copied) * sizeof(std::uint32_t), out_points);
+        if (err != CL_SUCCESS) {
+            release_buffers();
+            set_last_native_error(format_opencl_api_error("clEnqueueReadBuffer(q_iso_points)", err));
+            return false;
+        }
+    }
+    release_buffers();
+    return true;
+#else
+    (void)nx;
+    (void)ny;
+    (void)nz;
+    (void)context_key;
+    (void)stride;
+    (void)dx_meters;
+    (void)threshold;
+    (void)threshold_fraction;
+    (void)q_scale;
+    (void)out_points;
+    (void)point_capacity;
+    set_last_native_error("q_criterion_iso_points: OpenCL disabled");
+    return false;
+#endif
+}
+
+static bool native_extract_q_criterion_iso_triangles_raw_dims_impl(
+    jint nx,
+    jint ny,
+    jint nz,
+    jlong context_key,
+    jint stride,
+    float dx_meters,
+    float threshold,
+    float threshold_fraction,
+    float q_scale,
+    float* out_vertices,
+    jint triangle_capacity,
+    int* out_stats,
+    jint stats_count
+) {
+    if (!out_stats || stats_count < 5) {
+        set_last_native_error("q_criterion_iso_triangles: missing stats output");
+        return false;
+    }
+    for (int i = 0; i < stats_count; ++i) {
+        out_stats[i] = 0;
+    }
+    if (!g_cfg.initialized || nx <= 0 || ny <= 0 || nz <= 0 || stride <= 0) {
+        set_last_native_error("q_criterion_iso_triangles: invalid runtime or dimensions");
+        return false;
+    }
+    if (triangle_capacity < 0 || (triangle_capacity > 0 && !out_vertices)) {
+        set_last_native_error("q_criterion_iso_triangles: invalid triangle output buffer");
+        return false;
+    }
+    if (!std::isfinite(dx_meters) || dx_meters <= 0.0f
+        || !std::isfinite(threshold) || threshold < 0.0f
+        || !std::isfinite(threshold_fraction) || threshold_fraction < 0.0f
+        || !std::isfinite(q_scale) || q_scale <= 0.0f) {
+        set_last_native_error("q_criterion_iso_triangles: invalid threshold configuration");
+        return false;
+    }
+    const int sx = (nx + stride - 1) / stride;
+    const int sy = (ny + stride - 1) / stride;
+    const int sz = (nz + stride - 1) / stride;
+    const int64_t atlas_cells64 = static_cast<int64_t>(sx) * sy * sz;
+    if (sx < 4 || sy < 4 || sz < 4 || atlas_cells64 <= 0 || atlas_cells64 > std::numeric_limits<int>::max() / 4) {
+        return true;
+    }
+    const int atlas_cells = static_cast<int>(atlas_cells64);
+    const int value_count = atlas_cells * 4;
+    const std::size_t cells = static_cast<std::size_t>(nx) * ny * nz;
+
+    LockedContext locked_context(context_key, false);
+    if (!locked_context.ctx) {
+        set_last_native_error("q_criterion_iso_triangles: missing context");
+        return false;
+    }
+    ContextState& ctx = *locked_context.ctx;
+    ensure_context_shape(ctx, nx, ny, nz, cells);
+
+#if defined(AERO_LBM_OPENCL)
+    cl_mem flow_buffer = nullptr;
+    if (!native_write_flow_atlas_to_opencl_buffer(ctx, stride, sx, sy, sz, value_count, &flow_buffer)) {
+        set_last_native_error(g_opencl.error.empty() ? "q_criterion_iso_triangles: no OpenCL flow atlas buffer" : g_opencl.error);
+        return false;
+    }
+
+    cl_int err = CL_SUCCESS;
+    cl_mem stats_buffer = clCreateBuffer(g_opencl.context, CL_MEM_READ_WRITE, 3 * sizeof(std::uint32_t), nullptr, &err);
+    if (err != CL_SUCCESS || !stats_buffer) {
+        set_last_native_error(format_opencl_api_error("clCreateBuffer(q_iso_triangle_stats)", err));
+        return false;
+    }
+    cl_mem vertices_buffer = nullptr;
+    if (triangle_capacity > 0) {
+        vertices_buffer = clCreateBuffer(
+            g_opencl.context,
+            CL_MEM_READ_WRITE,
+            static_cast<std::size_t>(triangle_capacity) * 9u * sizeof(float),
+            nullptr,
+            &err
+        );
+        if (err != CL_SUCCESS || !vertices_buffer) {
+            clReleaseMemObject(stats_buffer);
+            set_last_native_error(format_opencl_api_error("clCreateBuffer(q_iso_triangle_vertices)", err));
+            return false;
+        }
+    }
+
+    auto release_buffers = [&]() {
+        if (vertices_buffer) {
+            clReleaseMemObject(vertices_buffer);
+        }
+        clReleaseMemObject(stats_buffer);
+    };
+
+    std::uint32_t stats[3] = {0u, 0u, 0u};
+    err = clEnqueueWriteBuffer(g_opencl.queue, stats_buffer, CL_TRUE, 0, sizeof(stats), stats, 0, nullptr, nullptr);
+    if (err != CL_SUCCESS) {
+        release_buffers();
+        set_last_native_error(format_opencl_api_error("clEnqueueWriteBuffer(q_iso_triangle_stats_zero)", err));
+        return false;
+    }
+
+    const float inv_two_dx = 0.5f / std::max(dx_meters * static_cast<float>(stride), 1.0e-6f);
+    err = CL_SUCCESS;
+    err |= clSetKernelArg(g_opencl.k_q_criterion_stats_from_flow_atlas, 0, sizeof(cl_mem), &flow_buffer);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_stats_from_flow_atlas, 1, sizeof(int), &sx);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_stats_from_flow_atlas, 2, sizeof(int), &sy);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_stats_from_flow_atlas, 3, sizeof(int), &sz);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_stats_from_flow_atlas, 4, sizeof(float), &inv_two_dx);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_stats_from_flow_atlas, 5, sizeof(float), &q_scale);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_stats_from_flow_atlas, 6, sizeof(cl_mem), &stats_buffer);
+    if (err != CL_SUCCESS) {
+        release_buffers();
+        set_last_native_error(format_opencl_api_error("clSetKernelArg(k_q_criterion_stats_from_flow_atlas)", err));
+        return false;
+    }
+    err = enqueue_kernel_1d(g_opencl.k_q_criterion_stats_from_flow_atlas, atlas_cells);
+    if (err != CL_SUCCESS) {
+        release_buffers();
+        set_last_native_error(format_opencl_api_error("clEnqueueNDRangeKernel(k_q_criterion_stats_from_flow_atlas)", err));
+        return false;
+    }
+    err = clEnqueueReadBuffer(g_opencl.queue, stats_buffer, CL_TRUE, 0, sizeof(stats), stats, 0, nullptr, nullptr);
+    if (err != CL_SUCCESS) {
+        release_buffers();
+        set_last_native_error(format_opencl_api_error("clEnqueueReadBuffer(q_iso_triangle_stats)", err));
+        return false;
+    }
+
+    const std::uint32_t max_scaled = stats[0];
+    const std::uint32_t positive_samples = stats[1];
+    std::uint32_t threshold_scaled = threshold > 0.0f
+        ? q_criterion_scale_to_u31(threshold, q_scale)
+        : static_cast<std::uint32_t>(
+            static_cast<double>(max_scaled) * std::min(std::max(threshold_fraction, 0.0f), 1.0f)
+        );
+    out_stats[1] = static_cast<int>(std::min<std::uint32_t>(positive_samples, static_cast<std::uint32_t>(std::numeric_limits<int>::max())));
+    out_stats[2] = static_cast<int>(max_scaled);
+    out_stats[3] = static_cast<int>(threshold_scaled);
+    if (max_scaled == 0u || positive_samples == 0u || threshold_scaled >= max_scaled || triangle_capacity <= 0) {
+        release_buffers();
+        return true;
+    }
+
+    stats[0] = max_scaled;
+    stats[1] = positive_samples;
+    stats[2] = 0u;
+    err = clEnqueueWriteBuffer(g_opencl.queue, stats_buffer, CL_TRUE, 0, sizeof(stats), stats, 0, nullptr, nullptr);
+    if (err != CL_SUCCESS) {
+        release_buffers();
+        set_last_native_error(format_opencl_api_error("clEnqueueWriteBuffer(q_iso_triangle_emit_stats_zero)", err));
+        return false;
+    }
+
+    const int cube_cells = (sx - 3) * (sy - 3) * (sz - 3);
+    const std::uint32_t triangle_capacity_u32 = static_cast<std::uint32_t>(triangle_capacity);
+    const int sample_stride = stride;
+    err = CL_SUCCESS;
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_triangles_from_flow_atlas, 0, sizeof(cl_mem), &flow_buffer);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_triangles_from_flow_atlas, 1, sizeof(int), &sx);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_triangles_from_flow_atlas, 2, sizeof(int), &sy);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_triangles_from_flow_atlas, 3, sizeof(int), &sz);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_triangles_from_flow_atlas, 4, sizeof(int), &sample_stride);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_triangles_from_flow_atlas, 5, sizeof(float), &inv_two_dx);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_triangles_from_flow_atlas, 6, sizeof(float), &q_scale);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_triangles_from_flow_atlas, 7, sizeof(std::uint32_t), &threshold_scaled);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_triangles_from_flow_atlas, 8, sizeof(std::uint32_t), &triangle_capacity_u32);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_triangles_from_flow_atlas, 9, sizeof(cl_mem), &stats_buffer);
+    err |= clSetKernelArg(g_opencl.k_q_criterion_emit_triangles_from_flow_atlas, 10, sizeof(cl_mem), &vertices_buffer);
+    if (err != CL_SUCCESS) {
+        release_buffers();
+        set_last_native_error(format_opencl_api_error("clSetKernelArg(k_q_criterion_emit_triangles_from_flow_atlas)", err));
+        return false;
+    }
+    err = enqueue_kernel_1d(g_opencl.k_q_criterion_emit_triangles_from_flow_atlas, cube_cells);
+    if (err != CL_SUCCESS) {
+        release_buffers();
+        set_last_native_error(format_opencl_api_error("clEnqueueNDRangeKernel(k_q_criterion_emit_triangles_from_flow_atlas)", err));
+        return false;
+    }
+    err = clEnqueueReadBuffer(g_opencl.queue, stats_buffer, CL_TRUE, 0, sizeof(stats), stats, 0, nullptr, nullptr);
+    if (err != CL_SUCCESS) {
+        release_buffers();
+        set_last_native_error(format_opencl_api_error("clEnqueueReadBuffer(q_iso_triangle_emit_stats)", err));
+        return false;
+    }
+    const std::uint32_t emitted_triangles = stats[2];
+    const int copied = static_cast<int>(std::min<std::uint32_t>(emitted_triangles, triangle_capacity_u32));
+    out_stats[0] = copied;
+    out_stats[4] = static_cast<int>(std::min<std::uint32_t>(emitted_triangles, static_cast<std::uint32_t>(std::numeric_limits<int>::max())));
+    if (copied > 0) {
+        err = enqueue_read_buffer_chunked(vertices_buffer, static_cast<std::size_t>(copied) * 9u * sizeof(float), out_vertices);
+        if (err != CL_SUCCESS) {
+            release_buffers();
+            set_last_native_error(format_opencl_api_error("clEnqueueReadBuffer(q_iso_triangle_vertices)", err));
+            return false;
+        }
+    }
+    release_buffers();
+    return true;
+#else
+    (void)nx;
+    (void)ny;
+    (void)nz;
+    (void)context_key;
+    (void)stride;
+    (void)dx_meters;
+    (void)threshold;
+    (void)threshold_fraction;
+    (void)q_scale;
+    (void)out_vertices;
+    (void)triangle_capacity;
+    set_last_native_error("q_criterion_iso_triangles: OpenCL disabled");
+    return false;
+#endif
+}
+
 static bool native_extract_flow_atlas_raw_dims_impl(
     jint nx,
     jint ny,
@@ -10534,6 +11427,72 @@ AERO_LBM_CAPI_EXPORT int aero_lbm_extract_flow_atlas_rect(
     ) ? 1 : 0;
 }
 
+AERO_LBM_CAPI_EXPORT int aero_lbm_extract_q_criterion_iso_points_rect(
+    int nx,
+    int ny,
+    int nz,
+    long long context_key,
+    int stride,
+    float dx_meters,
+    float threshold,
+    float threshold_fraction,
+    float q_scale,
+    int* out_points,
+    int point_capacity,
+    int* out_stats,
+    int stats_count
+) {
+    RuntimeGuard guard;
+    return native_extract_q_criterion_iso_points_raw_dims_impl(
+        nx,
+        ny,
+        nz,
+        static_cast<jlong>(context_key),
+        stride,
+        dx_meters,
+        threshold,
+        threshold_fraction,
+        q_scale,
+        out_points,
+        point_capacity,
+        out_stats,
+        stats_count
+    ) ? 1 : 0;
+}
+
+AERO_LBM_CAPI_EXPORT int aero_lbm_extract_q_criterion_iso_triangles_rect(
+    int nx,
+    int ny,
+    int nz,
+    long long context_key,
+    int stride,
+    float dx_meters,
+    float threshold,
+    float threshold_fraction,
+    float q_scale,
+    float* out_vertices,
+    int triangle_capacity,
+    int* out_stats,
+    int stats_count
+) {
+    RuntimeGuard guard;
+    return native_extract_q_criterion_iso_triangles_raw_dims_impl(
+        nx,
+        ny,
+        nz,
+        static_cast<jlong>(context_key),
+        stride,
+        dx_meters,
+        threshold,
+        threshold_fraction,
+        q_scale,
+        out_vertices,
+        triangle_capacity,
+        out_stats,
+        stats_count
+    ) ? 1 : 0;
+}
+
 AERO_LBM_CAPI_EXPORT int aero_lbm_copy_flow_temperature_subrect(
     int nx,
     int ny,
@@ -11191,6 +12150,105 @@ JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_runtime_NativeSimulationBrid
         set_wind_tunnel_last_error(wind_tunnel_solver_error("extract_wind_tunnel_flow_atlas"));
     }
     return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_runtime_NativeSimulationBridge_nativeExtractWindTunnelQCriterionIsoPoints(
+    JNIEnv* env,
+    jclass,
+    jlong solver_handle,
+    jint sample_stride,
+    jfloat threshold,
+    jfloat threshold_fraction,
+    jfloat q_scale,
+    jintArray out_points,
+    jintArray out_stats
+) {
+    clear_wind_tunnel_last_error();
+    if (solver_handle == 0 || sample_stride <= 0 || !out_stats
+        || env->GetArrayLength(out_stats) < 5) {
+        set_wind_tunnel_last_error("extract_wind_tunnel_q_criterion_iso_points: invalid handle, stride, or stats buffer");
+        return JNI_FALSE;
+    }
+    const jsize point_capacity = out_points ? env->GetArrayLength(out_points) : 0;
+    const jsize stats_count = env->GetArrayLength(out_stats);
+    std::vector<int> points(static_cast<std::size_t>(point_capacity), 0);
+    std::vector<int> stats(static_cast<std::size_t>(stats_count), 0);
+    const int ok = aero_solver_extract_q_criterion_iso_points(
+        static_cast<long long>(solver_handle),
+        static_cast<int>(sample_stride),
+        threshold,
+        threshold_fraction,
+        q_scale,
+        point_capacity > 0 ? points.data() : nullptr,
+        static_cast<int>(point_capacity),
+        stats.data(),
+        static_cast<int>(stats_count)
+    );
+    if (!ok) {
+        set_wind_tunnel_last_error(wind_tunnel_solver_error("extract_wind_tunnel_q_criterion_iso_points"));
+        return JNI_FALSE;
+    }
+    if (point_capacity > 0 && !copy_ints_to_java_array(env, out_points, points.data(), point_capacity)) {
+        set_wind_tunnel_last_error("extract_wind_tunnel_q_criterion_iso_points: failed to copy point array");
+        return JNI_FALSE;
+    }
+    if (!copy_ints_to_java_array(env, out_stats, stats.data(), stats_count)) {
+        set_wind_tunnel_last_error("extract_wind_tunnel_q_criterion_iso_points: failed to copy stats array");
+        return JNI_FALSE;
+    }
+    return JNI_TRUE;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_runtime_NativeSimulationBridge_nativeExtractWindTunnelQCriterionIsoTriangles(
+    JNIEnv* env,
+    jclass,
+    jlong solver_handle,
+    jint sample_stride,
+    jfloat threshold,
+    jfloat threshold_fraction,
+    jfloat q_scale,
+    jfloatArray out_vertices,
+    jintArray out_stats
+) {
+    clear_wind_tunnel_last_error();
+    if (solver_handle == 0 || sample_stride <= 0 || !out_vertices || !out_stats
+        || env->GetArrayLength(out_stats) < 5) {
+        set_wind_tunnel_last_error("extract_wind_tunnel_q_criterion_iso_triangles: invalid handle, stride, or output buffer");
+        return JNI_FALSE;
+    }
+    const jsize vertex_float_count = env->GetArrayLength(out_vertices);
+    if (vertex_float_count < 0 || (vertex_float_count % 9) != 0) {
+        set_wind_tunnel_last_error("extract_wind_tunnel_q_criterion_iso_triangles: vertex buffer length must be a multiple of 9");
+        return JNI_FALSE;
+    }
+    jfloat* vertices = env->GetFloatArrayElements(out_vertices, nullptr);
+    if (!vertices) {
+        set_wind_tunnel_last_error("extract_wind_tunnel_q_criterion_iso_triangles: failed to pin Java vertex array");
+        return JNI_FALSE;
+    }
+    const jsize stats_count = env->GetArrayLength(out_stats);
+    std::vector<int> stats(static_cast<std::size_t>(stats_count), 0);
+    const int ok = aero_solver_extract_q_criterion_iso_triangles(
+        static_cast<long long>(solver_handle),
+        static_cast<int>(sample_stride),
+        threshold,
+        threshold_fraction,
+        q_scale,
+        vertices,
+        static_cast<int>(vertex_float_count / 9),
+        stats.data(),
+        static_cast<int>(stats_count)
+    );
+    env->ReleaseFloatArrayElements(out_vertices, vertices, ok ? 0 : JNI_ABORT);
+    if (!ok) {
+        set_wind_tunnel_last_error(wind_tunnel_solver_error("extract_wind_tunnel_q_criterion_iso_triangles"));
+        return JNI_FALSE;
+    }
+    if (!copy_ints_to_java_array(env, out_stats, stats.data(), stats_count)) {
+        set_wind_tunnel_last_error("extract_wind_tunnel_q_criterion_iso_triangles: failed to copy stats array");
+        return JNI_FALSE;
+    }
+    return JNI_TRUE;
 }
 
 JNIEXPORT jboolean JNICALL Java_com_aerodynamics4mc_runtime_NativeSimulationBridge_nativeComputeWindTunnelForceMoment(

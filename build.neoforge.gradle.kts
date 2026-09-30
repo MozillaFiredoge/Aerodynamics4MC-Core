@@ -55,6 +55,7 @@ mixins {
 			"client.CampfireSmokeParticleMixin",
 			"client.ClientWorldBlockStateMixin",
 			"client.ParticleAccessor",
+			"client.ParticleEngineMixin",
 			"client.ParticleMixin"
 		)
 		minVersion("1.21.11", "client.LeavesParticleMixin")
@@ -117,7 +118,10 @@ dependencies {
 	testCompileOnly("org.projectlombok:lombok:1.18.46")
 	testAnnotationProcessor("org.projectlombok:lombok:1.18.46")
 
-	jarJar(implementation("com.github.RazorPlay01:PacketHandler:1.3.0")!!)
+	jarJar(implementation("com.github.RazorPlay01:PacketHandler:1.3.0") {
+		// Use Minecraft's logging API; PacketHandler's version conflicts with 1.21.1's runtime constraints.
+		exclude(group = "org.slf4j", module = "slf4j-api")
+	}!!)
 }
 
 tasks.named("createMinecraftArtifacts") {

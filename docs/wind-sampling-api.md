@@ -1,5 +1,70 @@
 # Wind Sampling API
 
+## Custom coarse terrain (0.2.2)
+
+`AeroTerrainApi` supplies optional terrain inputs to the normal server-authoritative L0/L1
+atmosphere. The public API module has no Minecraft dependency. It does not grant access to
+solver buffers or replace the atmosphere authority.
+
+```java
+AutoCloseable registration = AeroTerrainApi.registerProvider(
+    A4mcId.parse("example:custom_islands"),
+    (world, blockX, blockZ) -> {
+        if (!ownsColumn(world, blockX, blockZ)) {
+            return AeroTerrainSample.UNAVAILABLE;
+        }
+        return AeroTerrainSample.available(
+            274.0f, 0.8f, 0.05f, AeroTerrainSurfaceClass.PLAINS);
+    });
+```
+
+Height is the first free Y coordinate in blocks, matching the vanilla worldgen height query;
+biome temperature uses Minecraft biome units and roughness length is in meters. Available
+samples require finite values, non-negative roughness and a known surface class. Return
+`UNAVAILABLE` only for columns your integration does not own. Unclaimed columns use the
+existing worldgen provider and its fallback.
+
+Register during mod initialization before sampling begins. Registration is process-wide;
+check the dimension and, when needed, `world.platformHandle()` to distinguish server worlds.
+Providers run on the atmosphere simulation thread, including for unloaded chunks. They must
+read thread-safe terrain snapshots without loading chunks or waiting on the server thread.
+Publish changed terrain before calling `AeroTerrainApi.invalidateTerrain()`. This invalidates
+coarse terrain caches across all server worlds on the next refresh; batch updates rather
+than invalidating once per column. It does not rebuild L2 block geometry.
+
+Registration and closing its handle also invalidate coarse terrain caches. Closing a handle
+is idempotent and cannot remove a later registration with the same ID. Provider IDs must be
+unique. Multiple providers claiming one column, null samples and provider exceptions are
+reported with provider/column context instead of silently changing the terrain authority.
+A callback failure can stop the atmosphere coordinator; repair the integration rather than
+relying on a fallback for claimed columns.
+
+## Particle wind rules (0.2.2)
+
+The client creates `config/aerodynamics4mc-particles.json` on first initialization:
+
+```json
+{
+  "enabled": true,
+  "whitelist": [],
+  "blacklist": []
+}
+```
+
+Defaults retain the existing flame, smoke, campfire smoke and supported falling-leaf wind
+effects, and include FBP's replacement flame/smoke classes. Whitelist entries add other
+particle classes; blacklist entries disable matching built-in or whitelisted classes.
+Blacklist takes precedence. Use fully qualified Java class names, with `*` for wildcards,
+for example `hantonik.fbp.particle.*` to disable FBP wind. These are runtime particle class
+names, not registry IDs; replacement particles often reuse vanilla particle IDs.
+
+Restart the client after editing the file. `enabled: false` disables these particle wind
+effects. Generic whitelist support changes particle velocity; mods with special movement
+rules may need a dedicated adapter. FBP flame has such an adapter because it ignores its
+horizontal velocity. FBP's freeze control and Minecraft pause state remain respected.
+
+Minecraft-free regression checks: `python3 tools/check-integration-contracts.py`.
+
 ## Purpose
 
 This document defines the stable wind sampling contract for gameplay systems and integration with other mods.

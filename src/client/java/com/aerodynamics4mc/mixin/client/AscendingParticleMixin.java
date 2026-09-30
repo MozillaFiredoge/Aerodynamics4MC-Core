@@ -1,6 +1,7 @@
 package com.aerodynamics4mc.mixin.client;
 
 import com.aerodynamics4mc.client.ParticleWindController;
+import com.aerodynamics4mc.client.ParticleWindConfig;
 
 import net.minecraft.client.particle.BaseAshSmokeParticle;
 import net.minecraft.client.particle.SmokeParticle;
@@ -15,6 +16,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 abstract class AscendingParticleMixin {
     @Inject(method = "tick", at = @At("TAIL"))
     private void a4mc$applyAscendingWind(CallbackInfo ci) {
+        if (!ParticleWindConfig.allowsBuiltIn(this)) return;
         Object self = this;
         if (!(self instanceof SmokeParticle) && !(self instanceof WhiteSmokeParticle)) {
             return;

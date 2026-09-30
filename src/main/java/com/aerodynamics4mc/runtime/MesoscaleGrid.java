@@ -1,5 +1,6 @@
 package com.aerodynamics4mc.runtime;
 
+import com.aerodynamics4mc.api.AeroTerrainApi;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
@@ -97,6 +98,7 @@ final class MesoscaleGrid implements AutoCloseable {
     private int activeLayers = 1;
     private int verticalBaseY = 0;
     private long lastTickProcessed = Long.MIN_VALUE;
+    private long terrainRevision = Long.MIN_VALUE;
     private long lastForcingRefreshTick = Long.MIN_VALUE;
     private float accumulatedStepSeconds = 0.0f;
     private boolean forcingReady = false;
@@ -126,6 +128,14 @@ final class MesoscaleGrid implements AutoCloseable {
         SeedTerrainProvider provider,
         BackgroundMetGrid background
     ) {
+        long nextTerrainRevision = AeroTerrainApi.terrainRevision();
+        boolean terrainChanged = terrainRevision != nextTerrainRevision;
+        terrainRevision = nextTerrainRevision;
+        if (terrainChanged) {
+            for (CellColumnState cell : cells.values()) {
+                cell.staticInitialized = false;
+            }
+        }
         int nextCenterCellX = Math.floorDiv(focus.getX(), cellSizeBlocks);
         int nextCenterCellZ = Math.floorDiv(focus.getZ(), cellSizeBlocks);
         int nextVerticalBaseY = Math.max(world.getSeaLevel(), world.getMinY());
@@ -152,6 +162,7 @@ final class MesoscaleGrid implements AutoCloseable {
         }
 
         boolean forcingRebuildDue = !forcingReady
+            || terrainChanged
             || firstRefresh
             || layoutChanged
             || lastForcingRefreshTick == Long.MIN_VALUE

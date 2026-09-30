@@ -1,6 +1,7 @@
 package com.aerodynamics4mc.mixin.client;
 
 import com.aerodynamics4mc.client.ParticleWindController;
+import com.aerodynamics4mc.client.ParticleWindConfig;
 
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.particle.FlameParticle;
@@ -39,6 +40,7 @@ abstract class ParticleMixin {
 
     @Inject(method = "tick", at = @At("TAIL"))
     private void a4mc$applyBaseParticleWind(CallbackInfo ci) {
+        if (!ParticleWindConfig.allowsBuiltIn(this)) return;
         if (!(((Object) this) instanceof FlameParticle)) {
             return;
         }

@@ -644,6 +644,110 @@ AERO_LBM_CAPI_EXPORT int aero_solver_extract_flow_atlas(
     return AERO_SOLVER_STATUS_OK;
 }
 
+AERO_LBM_CAPI_EXPORT int aero_solver_extract_q_criterion_iso_points(
+    long long handle,
+    int stride,
+    float threshold,
+    float threshold_fraction,
+    float q_scale,
+    int* out_points,
+    int point_capacity,
+    int* out_stats,
+    int stats_count
+) {
+    SolverGlobals& globals = solver_globals();
+    std::lock_guard<SolverSpinMutex> lock(globals.mutex);
+    clear_error();
+    SolverContext* ctx = lookup_context(handle);
+    if (!ctx) {
+        return AERO_SOLVER_STATUS_ERROR;
+    }
+    if (stride <= 0 || point_capacity < 0 || !out_stats || stats_count < 5) {
+        set_error("invalid Q-criterion iso output request");
+        return AERO_SOLVER_STATUS_ERROR;
+    }
+    if (point_capacity > 0 && !out_points) {
+        set_error("missing Q-criterion iso point buffer");
+        return AERO_SOLVER_STATUS_ERROR;
+    }
+    if (!std::isfinite(threshold) || threshold < 0.0f
+        || !std::isfinite(threshold_fraction) || threshold_fraction < 0.0f
+        || !std::isfinite(q_scale) || q_scale <= 0.0f) {
+        set_error("invalid Q-criterion iso threshold configuration");
+        return AERO_SOLVER_STATUS_ERROR;
+    }
+    if (!aero_lbm_extract_q_criterion_iso_points_rect(
+            ctx->grid.nx,
+            ctx->grid.ny,
+            ctx->grid.nz,
+            ctx->context_key,
+            stride,
+            ctx->grid.dx,
+            threshold,
+            threshold_fraction,
+            q_scale,
+            out_points,
+            point_capacity,
+            out_stats,
+            stats_count)) {
+        set_error(std::string("aero_lbm_extract_q_criterion_iso_points_rect failed: ") + aero_lbm_last_error());
+        return AERO_SOLVER_STATUS_ERROR;
+    }
+    return AERO_SOLVER_STATUS_OK;
+}
+
+AERO_LBM_CAPI_EXPORT int aero_solver_extract_q_criterion_iso_triangles(
+    long long handle,
+    int stride,
+    float threshold,
+    float threshold_fraction,
+    float q_scale,
+    float* out_vertices,
+    int triangle_capacity,
+    int* out_stats,
+    int stats_count
+) {
+    SolverGlobals& globals = solver_globals();
+    std::lock_guard<SolverSpinMutex> lock(globals.mutex);
+    clear_error();
+    SolverContext* ctx = lookup_context(handle);
+    if (!ctx) {
+        return AERO_SOLVER_STATUS_ERROR;
+    }
+    if (stride <= 0 || triangle_capacity < 0 || !out_stats || stats_count < 5) {
+        set_error("invalid Q-criterion iso triangle output request");
+        return AERO_SOLVER_STATUS_ERROR;
+    }
+    if (triangle_capacity > 0 && !out_vertices) {
+        set_error("missing Q-criterion iso triangle vertex buffer");
+        return AERO_SOLVER_STATUS_ERROR;
+    }
+    if (!std::isfinite(threshold) || threshold < 0.0f
+        || !std::isfinite(threshold_fraction) || threshold_fraction < 0.0f
+        || !std::isfinite(q_scale) || q_scale <= 0.0f) {
+        set_error("invalid Q-criterion iso triangle threshold configuration");
+        return AERO_SOLVER_STATUS_ERROR;
+    }
+    if (!aero_lbm_extract_q_criterion_iso_triangles_rect(
+            ctx->grid.nx,
+            ctx->grid.ny,
+            ctx->grid.nz,
+            ctx->context_key,
+            stride,
+            ctx->grid.dx,
+            threshold,
+            threshold_fraction,
+            q_scale,
+            out_vertices,
+            triangle_capacity,
+            out_stats,
+            stats_count)) {
+        set_error(std::string("aero_lbm_extract_q_criterion_iso_triangles_rect failed: ") + aero_lbm_last_error());
+        return AERO_SOLVER_STATUS_ERROR;
+    }
+    return AERO_SOLVER_STATUS_OK;
+}
+
 AERO_LBM_CAPI_EXPORT int aero_solver_compute_force_moment(
     long long handle,
     const float* reference_point,
