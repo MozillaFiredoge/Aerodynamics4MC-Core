@@ -95,6 +95,7 @@ final class MesoscaleGrid implements AutoCloseable {
     private volatile ReadState readState = ReadState.EMPTY;
     private int centerCellX;
     private int centerCellZ;
+    private volatile int wrapPeriodCells;
     private int activeLayers = 1;
     private int verticalBaseY = 0;
     private long lastTickProcessed = Long.MIN_VALUE;
@@ -136,6 +137,7 @@ final class MesoscaleGrid implements AutoCloseable {
                 cell.staticInitialized = false;
             }
         }
+        wrapPeriodCells = WorldWrap.periodBlocks(world) / cellSizeBlocks;
         int nextCenterCellX = Math.floorDiv(focus.getX(), cellSizeBlocks);
         int nextCenterCellZ = Math.floorDiv(focus.getZ(), cellSizeBlocks);
         int nextVerticalBaseY = Math.max(world.getSeaLevel(), world.getMinY());
@@ -193,7 +195,7 @@ final class MesoscaleGrid implements AutoCloseable {
     }
 
     Sample sample(BlockPos pos) {
-        return readState.sample(pos);
+        return readState.sample(pos, wrapPeriodCells);
     }
 
     boolean seedL2Window(
@@ -227,6 +229,13 @@ final class MesoscaleGrid implements AutoCloseable {
             || outSurfaceTemperature.length != cellsCount) {
             return false;
         }
+        int wrapPeriodBlocks = wrapPeriodCells * state.cellSizeBlocks();
+        origin = WorldWrap.nearest(
+            origin,
+            state.centerCellX() * state.cellSizeBlocks(),
+            state.centerCellZ() * state.cellSizeBlocks(),
+            wrapPeriodBlocks
+        );
 
         int minCellX = state.centerCellX() - state.radiusCells();
         int maxCellX = state.centerCellX() + state.radiusCells();
@@ -2345,12 +2354,13 @@ final class MesoscaleGrid implements AutoCloseable {
             return presentColumns * activeLayers;
         }
 
-        private Sample sample(BlockPos pos) {
+        private Sample sample(BlockPos pos, int wrapPeriodCells) {
             if (empty() || pos == null) {
                 return null;
             }
-            int cellX = Math.floorDiv(pos.getX(), cellSizeBlocks);
-            int cellZ = Math.floorDiv(pos.getZ(), cellSizeBlocks);
+            // In a wrapping world the grid may lie a whole period away from pos; use the copy inside it.
+            int cellX = WorldWrap.nearest(Math.floorDiv(pos.getX(), cellSizeBlocks), centerCellX, wrapPeriodCells);
+            int cellZ = WorldWrap.nearest(Math.floorDiv(pos.getZ(), cellSizeBlocks), centerCellZ, wrapPeriodCells);
             int column = columnIndex(cellX, cellZ);
             if (column < 0) {
                 return null;

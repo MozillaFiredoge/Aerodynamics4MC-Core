@@ -55,6 +55,7 @@ final class BackgroundMetGrid {
     private WorldScaleDriver currentDriver;
     private int centerCellX;
     private int centerCellZ;
+    private volatile int wrapPeriodCells;
     private long lastRefreshTick = Long.MIN_VALUE;
     private long currentRefreshTick = Long.MIN_VALUE;
     private long terrainRevision = Long.MIN_VALUE;
@@ -85,6 +86,7 @@ final class BackgroundMetGrid {
         long nextTerrainRevision = AeroTerrainApi.terrainRevision();
         boolean terrainChanged = terrainRevision != nextTerrainRevision;
         terrainRevision = nextTerrainRevision;
+        wrapPeriodCells = WorldWrap.periodBlocks(world) / cellSizeBlocks;
         int nextCenterCellX = Math.floorDiv(focus.getX(), cellSizeBlocks);
         int nextCenterCellZ = Math.floorDiv(focus.getZ(), cellSizeBlocks);
         boolean centerChanged = nextCenterCellX != centerCellX || nextCenterCellZ != centerCellZ;
@@ -255,7 +257,7 @@ final class BackgroundMetGrid {
     }
 
     Sample sample(BlockPos pos) {
-        Sample sample = readState.sample(pos);
+        Sample sample = readState.sample(pos, wrapPeriodCells);
         if (sample != null) {
             return sample;
         }
@@ -266,8 +268,8 @@ final class BackgroundMetGrid {
         if (currentWorld == null || currentProvider == null) {
             return null;
         }
-        int cellX = Math.floorDiv(pos.getX(), cellSizeBlocks);
-        int cellZ = Math.floorDiv(pos.getZ(), cellSizeBlocks);
+        int cellX = WorldWrap.nearest(Math.floorDiv(pos.getX(), cellSizeBlocks), centerCellX, wrapPeriodCells);
+        int cellZ = WorldWrap.nearest(Math.floorDiv(pos.getZ(), cellSizeBlocks), centerCellZ, wrapPeriodCells);
         CellState state = ensureCell(cellX, cellZ);
         return sampleFromCell(state, cellX, cellZ);
     }
@@ -1020,12 +1022,13 @@ final class BackgroundMetGrid {
             return presentCount;
         }
 
-        private Sample sample(BlockPos pos) {
+        private Sample sample(BlockPos pos, int wrapPeriodCells) {
             if (empty() || pos == null) {
                 return null;
             }
-            int cellX = Math.floorDiv(pos.getX(), cellSizeBlocks);
-            int cellZ = Math.floorDiv(pos.getZ(), cellSizeBlocks);
+            // In a wrapping world the grid may lie a whole period away from pos; use the copy inside it.
+            int cellX = WorldWrap.nearest(Math.floorDiv(pos.getX(), cellSizeBlocks), centerCellX, wrapPeriodCells);
+            int cellZ = WorldWrap.nearest(Math.floorDiv(pos.getZ(), cellSizeBlocks), centerCellZ, wrapPeriodCells);
             int index = readCellIndex(cellX, cellZ, centerCellX, centerCellZ, radiusCells, gridWidth);
             if (index < 0 || index >= cellPresent.length || !cellPresent[index]) {
                 return null;

@@ -309,6 +309,7 @@ public final class AeroServerRuntime {
 	public static final Map<ResourceKey<Level>, BackgroundMetGrid> backgroundMetGrids = new HashMap<>();
 	public final Map<ResourceKey<Level>, WorldScaleDriver> worldScaleDrivers = new HashMap<>();
 	public static final Map<ResourceKey<Level>, MesoscaleGrid> mesoscaleMetGrids = new HashMap<>();
+	public final Map<ResourceKey<Level>, BlockPos> backgroundRefreshFocus = new HashMap<>();
 	public final Map<ResourceKey<Level>, ConcurrentLinkedQueue<MesoscaleGrid.NestedFeedbackBin>> pendingNestedFeedbackBins = new ConcurrentHashMap<>();
 	public final Map<ResourceKey<Level>, NestedFeedbackRuntimeDiagnostics> nestedFeedbackRuntimeDiagnostics = new ConcurrentHashMap<>();
 	public final Set<ResourceKey<Level>> brickRuntimeHintWorldKeys = new HashSet<>();
@@ -1922,6 +1923,7 @@ public final class AeroServerRuntime {
 			grid.close();
 		}
 		mesoscaleMetGrids.clear();
+		backgroundRefreshFocus.clear();
 		localWeatherServerStates.clear();
 		pendingNestedFeedbackBins.clear();
 		nestedFeedbackRuntimeDiagnostics.clear();
@@ -1967,19 +1969,27 @@ public final class AeroServerRuntime {
 			if (players.isEmpty()) {
 				continue;
 			}
+			// In a wrapping world, average the copies of the players nearest the previous focus, so the
+			// focus keeps moving across the seam instead of jumping a whole period and resetting the grids.
+			int period = WorldWrap.periodBlocks(world);
+			BlockPos previousFocus = backgroundRefreshFocus.get(world.dimension());
+			double referenceX = previousFocus == null ? players.get(0).getX() : previousFocus.getX();
+			double referenceZ = previousFocus == null ? players.get(0).getZ() : previousFocus.getZ();
 			double sumX = 0.0;
 			double sumZ = 0.0;
 			for (ServerPlayer player : players) {
-				sumX += player.getX();
-				sumZ += player.getZ();
+				sumX += WorldWrap.nearest(player.getX(), referenceX, period);
+				sumZ += WorldWrap.nearest(player.getZ(), referenceZ, period);
 			}
 			int focusX = Mth.floor(sumX / players.size());
 			int focusZ = Mth.floor(sumZ / players.size());
+			BlockPos focus = new BlockPos(focusX, world.getSeaLevel(), focusZ);
+			backgroundRefreshFocus.put(world.dimension(), focus);
 			requests.put(
 					world.dimension(),
 					new BackgroundRefreshRequest(
 							world,
-							new BlockPos(focusX, world.getSeaLevel(), focusZ),
+							focus,
 							new WorldEnvironmentSnapshot(
 									world.getDayTime(),
 									world.getRainLevel(1.0f),
@@ -1989,6 +1999,7 @@ public final class AeroServerRuntime {
 					)
 			);
 		}
+		backgroundRefreshFocus.keySet().retainAll(requests.keySet());
 		return new BackgroundRefreshBatch(tickCounter, Map.copyOf(requests));
 	}
 
@@ -5455,21 +5466,21 @@ public final class AeroServerRuntime {
 			return List.of();
 		}
 		BlockPos origin = key.origin();
-		double minX = origin.getX();
-		double minZ = origin.getZ();
-		double maxX = minX + GRID_SIZE;
-		double maxZ = minZ + GRID_SIZE;
+		int period = WorldWrap.periodBlocks(key.worldKey().identifier());
 		List<TornadoRegionDescriptor> descriptors = new ArrayList<>();
 		for (WorldScaleDriver.TornadoVortexSnapshot vortex : snapshot.tornadoVortices()) {
-			if (!intersectsRegionHorizontally(vortex, minX, minZ, maxX, maxZ)) {
+			// Vortices are placed in the weather grids' frame, which may be a period away in a wrapping world.
+			int minX = WorldWrap.nearest(origin.getX(), Mth.floor(vortex.centerBlockX()), period);
+			int minZ = WorldWrap.nearest(origin.getZ(), Mth.floor(vortex.centerBlockZ()), period);
+			if (!intersectsRegionHorizontally(vortex, minX, minZ, minX + GRID_SIZE, minZ + GRID_SIZE)) {
 				continue;
 			}
 			descriptors.add(new TornadoRegionDescriptor(
 					vortex.id(),
 					vortex.parentConvectiveClusterId(),
-					vortex.centerBlockX() - origin.getX(),
+					vortex.centerBlockX() - minX,
 					vortex.baseY() - origin.getY(),
-					vortex.centerBlockZ() - origin.getZ(),
+					vortex.centerBlockZ() - minZ,
 					vortex.translationXBlocksPerSecond(),
 					vortex.translationZBlocksPerSecond(),
 					vortex.coreRadiusBlocks(),
@@ -6641,6 +6652,9 @@ public final class AeroServerRuntime {
 		layer = Mth.clamp(layer, 0, snapshot.activeLayers() - 1);
 
 		short[] packedLayer = buildMeteorologicalMapLayer(snapshot, layer);
+		int wrapPeriodCells = WorldWrap.periodBlocks(world) / snapshot.cellSizeBlocks();
+		int playerCellX = Math.floorDiv(player.blockPosition().getX(), snapshot.cellSizeBlocks());
+		int playerCellZ = Math.floorDiv(player.blockPosition().getZ(), snapshot.cellSizeBlocks());
 		AeroMesoscaleMapPacket payload = new AeroMesoscaleMapPacket(
 				world.dimension().identifier(),
 				snapshot.gridWidth(),
@@ -6652,8 +6666,8 @@ public final class AeroServerRuntime {
 				snapshot.centerCellX(),
 				snapshot.centerCellZ(),
 				snapshot.verticalBaseY(),
-				Math.floorDiv(player.blockPosition().getX(), snapshot.cellSizeBlocks()),
-				Math.floorDiv(player.blockPosition().getZ(), snapshot.cellSizeBlocks()),
+				WorldWrap.nearest(playerCellX, snapshot.centerCellX(), wrapPeriodCells),
+				WorldWrap.nearest(playerCellZ, snapshot.centerCellZ(), wrapPeriodCells),
 				snapshot.lastTickProcessed(),
 				openScreen,
 				packedLayer
@@ -6775,7 +6789,8 @@ public final class AeroServerRuntime {
 		}
 		//?}
 		LocalWeatherServerState state = localWeatherStateFor(world);
-		if (state == null || !state.covers(pos)) {
+		BlockPos gridPos = state == null ? null : state.nearestCopy(pos, WorldWrap.periodBlocks(world));
+		if (state == null || !state.covers(gridPos)) {
 			return null;
 		}
 
@@ -6795,11 +6810,11 @@ public final class AeroServerRuntime {
 			return Biome.Precipitation.NONE;
 		}
 
-		float precipitation = state.sample(pos.getX(), pos.getZ(), AeroLocalWeatherPacket.CH_PRECIPITATION);
+		float precipitation = state.sample(gridPos.getX(), gridPos.getZ(), AeroLocalWeatherPacket.CH_PRECIPITATION);
 		if (precipitation < LocalWeatherServerState.MIN_GAMEPLAY_PRECIPITATION) {
 			return Biome.Precipitation.NONE;
 		}
-		float snowFraction = state.sample(pos.getX(), pos.getZ(), AeroLocalWeatherPacket.CH_SNOW_FRACTION);
+		float snowFraction = state.sample(gridPos.getX(), gridPos.getZ(), AeroLocalWeatherPacket.CH_SNOW_FRACTION);
 		return snowFraction > 0.52f ? Biome.Precipitation.SNOW : Biome.Precipitation.RAIN;
 	}
 
@@ -7735,6 +7750,15 @@ public final class AeroServerRuntime {
 			int runtimeTick
 	) {
 		private static final float MIN_GAMEPLAY_PRECIPITATION = 0.055f;
+
+		/** The copy of pos nearest this grid in a world that repeats every period blocks. */
+		BlockPos nearestCopy(BlockPos pos, int period) {
+			if (pos == null || packet == null) {
+				return pos;
+			}
+			int cellSize = packet.getCellSizeBlocks();
+			return WorldWrap.nearest(pos, packet.getCenterCellX() * cellSize, packet.getCenterCellZ() * cellSize, period);
+		}
 
 		boolean covers(BlockPos pos) {
 			if (pos == null || packet == null || packet.getGridWidth() <= 0 || packet.getCellSizeBlocks() <= 0) {
