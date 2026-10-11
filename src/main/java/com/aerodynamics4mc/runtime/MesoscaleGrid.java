@@ -95,7 +95,8 @@ final class MesoscaleGrid implements AutoCloseable {
     private volatile ReadState readState = ReadState.EMPTY;
     private int centerCellX;
     private int centerCellZ;
-    private volatile int wrapPeriodCells;
+    private int wrapPeriodCells;
+    private volatile Snapshot publishedSnapshot;
     private int activeLayers = 1;
     private int verticalBaseY = 0;
     private long lastTickProcessed = Long.MIN_VALUE;
@@ -119,6 +120,7 @@ final class MesoscaleGrid implements AutoCloseable {
         this.maxLayers = Math.max(1, maxLayers);
         this.stepSeconds = Math.max(1.0e-3f, stepSeconds);
         this.forcingRebuildTicks = Math.max(1, forcingRebuildTicks);
+        publishedSnapshot = buildSnapshot();
     }
 
     synchronized void refresh(
@@ -190,12 +192,12 @@ final class MesoscaleGrid implements AutoCloseable {
             }
         }
         if (forcingRebuildDue) {
-            publishReadState();
+            publishReadState(true);
         }
     }
 
     Sample sample(BlockPos pos) {
-        return readState.sample(pos, wrapPeriodCells);
+        return readState.sample(pos);
     }
 
     boolean seedL2Window(
@@ -229,7 +231,7 @@ final class MesoscaleGrid implements AutoCloseable {
             || outSurfaceTemperature.length != cellsCount) {
             return false;
         }
-        int wrapPeriodBlocks = wrapPeriodCells * state.cellSizeBlocks();
+        int wrapPeriodBlocks = state.wrapPeriodCells() * state.cellSizeBlocks();
         origin = WorldWrap.nearest(
             origin,
             state.centerCellX() * state.cellSizeBlocks(),
@@ -438,8 +440,13 @@ final class MesoscaleGrid implements AutoCloseable {
         return sampleEnvironment(centerX, centerZ, Math.max(0, radiusCells));
     }
 
-    synchronized Snapshot snapshot() {
-        int gridWidth = radiusCells * 2 + 1;
+    /** Published arrays belong to this snapshot and must only be read by consumers. */
+    Snapshot snapshot() {
+        return publishedSnapshot;
+    }
+
+    private Snapshot buildSnapshot() {
+        int gridWidth = cells.isEmpty() ? 0 : radiusCells * 2 + 1;
         int columnCount = gridWidth * gridWidth;
         int stateCount = columnCount * activeLayers;
         float[] terrainHeightBlocks = new float[columnCount];
@@ -642,6 +649,7 @@ final class MesoscaleGrid implements AutoCloseable {
             verticalBaseY,
             stepSeconds,
             lastTickProcessed,
+            wrapPeriodCells,
             terrainHeightBlocks,
             biomeTemperature,
             roughnessLengthMeters,
@@ -704,6 +712,7 @@ final class MesoscaleGrid implements AutoCloseable {
         accumulatedStepSeconds = 0.0f;
         forcingReady = false;
         nestedFeedbackDiagnostics = NestedFeedbackDiagnostics.EMPTY;
+        publishedSnapshot = buildSnapshot();
     }
 
     synchronized void runPendingSteps() {
@@ -720,7 +729,8 @@ final class MesoscaleGrid implements AutoCloseable {
             }
         }
         accumulatedStepSeconds -= stepsToRun * stepSeconds;
-        publishReadState();
+        // Publish the full weather/map snapshot after catching up, not once per intermediate step batch.
+        publishReadState(accumulatedStepSeconds < stepSeconds);
     }
 
     synchronized void applyPendingNestedFeedback(Iterable<NestedFeedbackBin> feedbackBins) {
@@ -1662,7 +1672,7 @@ final class MesoscaleGrid implements AutoCloseable {
         }
     }
 
-    private void publishReadState() {
+    private void publishReadState(boolean publishSnapshot) {
         int gridWidth = radiusCells * 2 + 1;
         int columnCount = gridWidth * gridWidth;
         int stateCount = columnCount * activeLayers;
@@ -1734,6 +1744,7 @@ final class MesoscaleGrid implements AutoCloseable {
             centerCellZ,
             verticalBaseY,
             presentColumns,
+            wrapPeriodCells,
             columnPresent,
             terrainHeightBlocks,
             biomeTemperature,
@@ -1754,6 +1765,9 @@ final class MesoscaleGrid implements AutoCloseable {
             ablMixingStrength,
             ablProfileBlend
         );
+        if (publishSnapshot) {
+            publishedSnapshot = buildSnapshot();
+        }
     }
 
     private static int readColumnIndex(
@@ -2295,6 +2309,7 @@ final class MesoscaleGrid implements AutoCloseable {
         int centerCellZ,
         int verticalBaseY,
         int presentColumns,
+        int wrapPeriodCells,
         boolean[] columnPresent,
         float[] terrainHeightBlocks,
         float[] biomeTemperature,
@@ -2320,6 +2335,7 @@ final class MesoscaleGrid implements AutoCloseable {
             0,
             1,
             1,
+            0,
             0,
             0,
             0,
@@ -2354,7 +2370,7 @@ final class MesoscaleGrid implements AutoCloseable {
             return presentColumns * activeLayers;
         }
 
-        private Sample sample(BlockPos pos, int wrapPeriodCells) {
+        private Sample sample(BlockPos pos) {
             if (empty() || pos == null) {
                 return null;
             }
@@ -2466,6 +2482,7 @@ final class MesoscaleGrid implements AutoCloseable {
         int verticalBaseY,
         float stepSeconds,
         long lastTickProcessed,
+        int wrapPeriodCells,
         float[] terrainHeightBlocks,
         float[] biomeTemperature,
         float[] roughnessLengthMeters,
@@ -2514,6 +2531,14 @@ final class MesoscaleGrid implements AutoCloseable {
         float[] liftProxy,
         NestedFeedbackDiagnostics nestedFeedbackDiagnostics
     ) {
+        boolean covers(BlockPos pos) {
+            if (pos == null || gridWidth <= 0) return false;
+            int cx = WorldWrap.nearest(Math.floorDiv(pos.getX(), cellSizeBlocks), centerCellX, wrapPeriodCells);
+            int cz = WorldWrap.nearest(Math.floorDiv(pos.getZ(), cellSizeBlocks), centerCellZ, wrapPeriodCells);
+            return Math.abs((long) cx - centerCellX) <= radiusCells
+                && Math.abs((long) cz - centerCellZ) <= radiusCells;
+        }
+
     }
 
     record NestedFeedbackDiagnostics(

@@ -4,6 +4,29 @@ This document is the release-facing roadmap for Aerodynamics4MC. It defines what
 
 Target first public stable release: **v0.1 on 2026-05-04**.
 
+## Pending: #19 teleport stalls
+
+L0 sampling now reads only published terrain/weather data. Missing columns no longer acquire
+the refresh lock or create cells on the server thread. L1 weather/map snapshots are built and
+published by the coordinator; their readers do not wait for rebuilding grids. Weather packets
+are shared within each dimension for a published snapshot, and uncovered destinations defer
+wind/weather synchronization until data is available.
+
+Large focus movements request a background refresh before the normal interval. Requests use
+the latest destination and retain #20's nearest-copy mapping for wrapping worlds. Grid sampling
+publishes the wrap period together with its data so an in-progress refresh cannot change the
+coordinate mapping of an older snapshot.
+
+Run `python3 tools/check-coarse-grid-runtime.py` to build and test on an isolated NeoForge 1.21.1
+server. Use `--skip-build` after building the core jar and generating its server launch script.
+The tests hold refresh locks while checking grid readers and packet builders, verify deferred
+misses and weather packet reuse, and cover terrain invalidation, old-snapshot stability, distant
+focus changes and wrap seams. Reports are retained in `build/reports/coarse-grid-runtime/`.
+All three platform builds passed. In a controlled test holding each grid's lock for 1.5 seconds,
+the pre-fix L0 miss and L1 snapshot reads waited about 1500 ms; fixed reads completed in under
+0.1 ms. This measures contention on those paths, not whole-server teleport latency.
+The reporter's complete 193-mod server setup still needs end-to-end validation.
+
 ## v0.2.2: Compatibility fixes
 
 - #15: Call Sable's server-side sublevel container overload directly. Reflecting over all

@@ -1744,7 +1744,7 @@ public final class AeroServerRuntime {
 		phaseStartNanos = System.nanoTime();
 		updateSimulationFocus(server);
 		recordMainThreadPhase(MAIN_THREAD_PHASE_FOCUS, System.nanoTime() - phaseStartNanos);
-		if (tickCounter == 1 || tickCounter % MESOSCALE_REFRESH_TICKS == 0) {
+		if (tickCounter == 1 || tickCounter % MESOSCALE_REFRESH_TICKS == 0 || backgroundFocusMoved(server)) {
 			phaseStartNanos = System.nanoTime();
 			pendingBackgroundRefreshBatch = captureBackgroundRefreshBatch(server);
 			recordMainThreadPhase(MAIN_THREAD_PHASE_BACKGROUND_BATCH, System.nanoTime() - phaseStartNanos);
@@ -1962,6 +1962,38 @@ public final class AeroServerRuntime {
 		releaseSimulationService();
 	}
 
+	/** Check requested focus, not the still-rebuilding grid, so one teleport queues one refresh. */
+	private boolean backgroundFocusMoved(MinecraftServer server) {
+		int threshold = MESOSCALE_MET_CELL_SIZE_BLOCKS * Math.max(1, MESOSCALE_MET_RADIUS_CELLS / 2);
+		for (ServerLevel world : server.getAllLevels()) {
+			if (world.players().isEmpty()) continue;
+			BlockPos previous = backgroundRefreshFocus.get(world.dimension());
+			if (previous == null) return true;
+			BlockPos next = backgroundFocusFor(world, world.players());
+			if (Math.abs((long) next.getX() - previous.getX()) >= threshold
+					|| Math.abs((long) next.getZ() - previous.getZ()) >= threshold) return true;
+		}
+		return false;
+	}
+
+	private BlockPos backgroundFocusFor(ServerLevel world, List<ServerPlayer> players) {
+		// In a wrapping world, average the copies of the players nearest the previous focus, so the
+		// focus keeps moving across the seam instead of jumping a whole period and resetting the grids.
+		int period = WorldWrap.periodBlocks(world);
+		BlockPos previousFocus = backgroundRefreshFocus.get(world.dimension());
+		double referenceX = previousFocus == null ? players.get(0).getX() : previousFocus.getX();
+		double referenceZ = previousFocus == null ? players.get(0).getZ() : previousFocus.getZ();
+		double sumX = 0.0;
+		double sumZ = 0.0;
+		for (ServerPlayer player : players) {
+			sumX += WorldWrap.nearest(player.getX(), referenceX, period);
+			sumZ += WorldWrap.nearest(player.getZ(), referenceZ, period);
+		}
+		int focusX = Mth.floor(sumX / players.size());
+		int focusZ = Mth.floor(sumZ / players.size());
+		return new BlockPos(focusX, world.getSeaLevel(), focusZ);
+	}
+
 	private BackgroundRefreshBatch captureBackgroundRefreshBatch(MinecraftServer server) {
 		Map<ResourceKey<Level>, BackgroundRefreshRequest> requests = new HashMap<>();
 		for (ServerLevel world : server.getAllLevels()) {
@@ -1969,21 +2001,7 @@ public final class AeroServerRuntime {
 			if (players.isEmpty()) {
 				continue;
 			}
-			// In a wrapping world, average the copies of the players nearest the previous focus, so the
-			// focus keeps moving across the seam instead of jumping a whole period and resetting the grids.
-			int period = WorldWrap.periodBlocks(world);
-			BlockPos previousFocus = backgroundRefreshFocus.get(world.dimension());
-			double referenceX = previousFocus == null ? players.get(0).getX() : previousFocus.getX();
-			double referenceZ = previousFocus == null ? players.get(0).getZ() : previousFocus.getZ();
-			double sumX = 0.0;
-			double sumZ = 0.0;
-			for (ServerPlayer player : players) {
-				sumX += WorldWrap.nearest(player.getX(), referenceX, period);
-				sumZ += WorldWrap.nearest(player.getZ(), referenceZ, period);
-			}
-			int focusX = Mth.floor(sumX / players.size());
-			int focusZ = Mth.floor(sumZ / players.size());
-			BlockPos focus = new BlockPos(focusX, world.getSeaLevel(), focusZ);
+			BlockPos focus = backgroundFocusFor(world, players);
 			backgroundRefreshFocus.put(world.dimension(), focus);
 			requests.put(
 					world.dimension(),
@@ -6836,13 +6854,8 @@ public final class AeroServerRuntime {
 		if (snapshot.gridWidth() <= 0 || snapshot.activeLayers() <= 0) {
 			return null;
 		}
-		AeroLocalWeatherPacket payload = LocalWeatherGrid.buildPacket(world.dimension().identifier(), snapshot);
-		if (payload == null) {
-			return null;
-		}
-		LocalWeatherServerState next = new LocalWeatherServerState(worldKey, payload, tickCounter);
-		localWeatherServerStates.put(worldKey, next);
-		return next;
+		if (localWeatherPayload(world, snapshot) == null) return null;
+		return localWeatherServerStates.get(worldKey);
 	}
 
 	public void waitForSolverIdle() {
@@ -7088,23 +7101,25 @@ public final class AeroServerRuntime {
 	}
 
 	private AeroLocalWeatherPacket buildLocalWeatherPayloadForPlayer(ServerPlayer player) {
-		if (player == null || !(player.level() instanceof ServerLevel world)) {
-			return null;
-		}
+		if (player == null || !(player.level() instanceof ServerLevel world)) return null;
 		MesoscaleGrid grid;
 		synchronized (simulationStateLock) {
 			grid = mesoscaleMetGrids.get(world.dimension());
 		}
-		if (grid == null) {
-			return null;
-		}
+		if (grid == null) return null;
 		MesoscaleGrid.Snapshot snapshot = grid.snapshot();
-		if (snapshot.gridWidth() <= 0 || snapshot.activeLayers() <= 0) {
-			return null;
-		}
+		if (!snapshot.covers(player.blockPosition())) return null;
+		return localWeatherPayload(world, snapshot);
+	}
+
+	private AeroLocalWeatherPacket localWeatherPayload(ServerLevel world, MesoscaleGrid.Snapshot snapshot) {
+		LocalWeatherServerState cached = localWeatherServerStates.get(world.dimension());
+		if (cached != null && cached.sourceSnapshot() == snapshot) return cached.packet();
+		if (snapshot.gridWidth() <= 0 || snapshot.activeLayers() <= 0) return null;
 		AeroLocalWeatherPacket payload = LocalWeatherGrid.buildPacket(world.dimension().identifier(), snapshot);
 		if (payload != null) {
-			localWeatherServerStates.put(world.dimension(), new LocalWeatherServerState(world.dimension(), payload, tickCounter));
+			localWeatherServerStates.put(world.dimension(),
+					new LocalWeatherServerState(world.dimension(), payload, tickCounter, snapshot));
 		}
 		return payload;
 	}
@@ -7171,6 +7186,9 @@ public final class AeroServerRuntime {
 								originZ + (z + 0.5) * cellSize
 						);
 						AeroWindSample sample = sampleCoarseWindLocked(world.dimension(), samplePos);
+						if (!sample.hasFlow()) {
+							return null;
+						}
 						packed[dstBase] = quantizeSignedToShort(sample.velocityX(), ATLAS_VELOCITY_QUANT_RANGE);
 						packed[dstBase + 1] = quantizeSignedToShort(sample.velocityY(), ATLAS_VELOCITY_QUANT_RANGE);
 						packed[dstBase + 2] = quantizeSignedToShort(sample.velocityZ(), ATLAS_VELOCITY_QUANT_RANGE);
@@ -7747,7 +7765,8 @@ public final class AeroServerRuntime {
 	private record LocalWeatherServerState(
 			ResourceKey<Level> worldKey,
 			AeroLocalWeatherPacket packet,
-			int runtimeTick
+			int runtimeTick,
+			MesoscaleGrid.Snapshot sourceSnapshot
 	) {
 		private static final float MIN_GAMEPLAY_PRECIPITATION = 0.055f;
 

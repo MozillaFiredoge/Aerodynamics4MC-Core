@@ -55,7 +55,7 @@ final class BackgroundMetGrid {
     private WorldScaleDriver currentDriver;
     private int centerCellX;
     private int centerCellZ;
-    private volatile int wrapPeriodCells;
+    private int wrapPeriodCells;
     private long lastRefreshTick = Long.MIN_VALUE;
     private long currentRefreshTick = Long.MIN_VALUE;
     private long terrainRevision = Long.MIN_VALUE;
@@ -227,6 +227,7 @@ final class BackgroundMetGrid {
                 centerCellX,
                 centerCellZ,
                 presentCount,
+                wrapPeriodCells,
                 cellPresent,
                 terrainHeightBlocks,
                 biomeTemperature,
@@ -256,22 +257,9 @@ final class BackgroundMetGrid {
         );
     }
 
+    /** Missing columns stay missing until the coordinator publishes its next refresh. */
     Sample sample(BlockPos pos) {
-        Sample sample = readState.sample(pos, wrapPeriodCells);
-        if (sample != null) {
-            return sample;
-        }
-        return sampleLocked(pos);
-    }
-
-    private synchronized Sample sampleLocked(BlockPos pos) {
-        if (currentWorld == null || currentProvider == null) {
-            return null;
-        }
-        int cellX = WorldWrap.nearest(Math.floorDiv(pos.getX(), cellSizeBlocks), centerCellX, wrapPeriodCells);
-        int cellZ = WorldWrap.nearest(Math.floorDiv(pos.getZ(), cellSizeBlocks), centerCellZ, wrapPeriodCells);
-        CellState state = ensureCell(cellX, cellZ);
-        return sampleFromCell(state, cellX, cellZ);
+        return readState.sample(pos);
     }
 
     private Sample sampleFromCell(CellState state, int cellX, int cellZ) {
@@ -952,6 +940,7 @@ final class BackgroundMetGrid {
             int centerCellX,
             int centerCellZ,
             int presentCount,
+            int wrapPeriodCells,
             boolean[] cellPresent,
             float[] terrainHeightBlocks,
             float[] biomeTemperature,
@@ -982,6 +971,7 @@ final class BackgroundMetGrid {
         private static final ReadState EMPTY = new ReadState(
                 0,
                 1,
+                0,
                 0,
                 0,
                 0,
@@ -1022,7 +1012,7 @@ final class BackgroundMetGrid {
             return presentCount;
         }
 
-        private Sample sample(BlockPos pos, int wrapPeriodCells) {
+        private Sample sample(BlockPos pos) {
             if (empty() || pos == null) {
                 return null;
             }
