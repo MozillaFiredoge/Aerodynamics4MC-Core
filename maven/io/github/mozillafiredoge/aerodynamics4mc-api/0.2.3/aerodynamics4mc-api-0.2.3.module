@@ -1,0 +1,100 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "io.github.mozillafiredoge",
+    "module": "aerodynamics4mc-api",
+    "version": "0.2.3",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "9.4.0"
+    }
+  },
+  "variants": [
+    {
+      "name": "apiElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.jvm.version": 17,
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-api"
+      },
+      "files": [
+        {
+          "name": "aerodynamics4mc-api-0.2.3.jar",
+          "url": "aerodynamics4mc-api-0.2.3.jar",
+          "size": 81619,
+          "sha512": "9d74e9bd33a569e89a5dc5e975a6ba7f421146c46f5078593d3c020d83ff3bf82d0e171b870eef1d84e57ae3f687142a08c3aeb1f22e4be6f3a547b83328bbb7",
+          "sha256": "db53b66643f141620551161256d84d7c28ba21d64c11564c93887f0552c1948f",
+          "sha1": "22f39e53c7dc033c078a724fbe85995c297b1f17",
+          "md5": "d339685a141d756bddeae43d5f463d7a"
+        }
+      ]
+    },
+    {
+      "name": "runtimeElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.jvm.version": 17,
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "aerodynamics4mc-api-0.2.3.jar",
+          "url": "aerodynamics4mc-api-0.2.3.jar",
+          "size": 81619,
+          "sha512": "9d74e9bd33a569e89a5dc5e975a6ba7f421146c46f5078593d3c020d83ff3bf82d0e171b870eef1d84e57ae3f687142a08c3aeb1f22e4be6f3a547b83328bbb7",
+          "sha256": "db53b66643f141620551161256d84d7c28ba21d64c11564c93887f0552c1948f",
+          "sha1": "22f39e53c7dc033c078a724fbe85995c297b1f17",
+          "md5": "d339685a141d756bddeae43d5f463d7a"
+        }
+      ]
+    },
+    {
+      "name": "sourcesElements",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "aerodynamics4mc-api-0.2.3-sources.jar",
+          "url": "aerodynamics4mc-api-0.2.3-sources.jar",
+          "size": 33369,
+          "sha512": "7ced95cf2ffe0fed6e2b7afdd6f7747e32fa056adc1892e668eaba3bfb1a724a2803383c1e3bca2e42ff82f6a827531fa16cb985a2686c8656f23ee270c60147",
+          "sha256": "f19464d24160361a7adb8ba391d91517c44c143e52c86b5b5896e93ac70ec76d",
+          "sha1": "578673505f6902ad2e3155ead3b50e549caec0bf",
+          "md5": "f13a7c7d08130e2f386878ebe1d23609"
+        }
+      ]
+    },
+    {
+      "name": "javadocElements",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "javadoc",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "aerodynamics4mc-api-0.2.3-javadoc.jar",
+          "url": "aerodynamics4mc-api-0.2.3-javadoc.jar",
+          "size": 4323829,
+          "sha512": "5cb99403372ea7866640a44598499cb03af265fe57df1e1f8c3a83cdb5bc41b360623fef94b53d31033b979166a6186acd07bc570edc3d698b010698484e74d0",
+          "sha256": "31f0f184de0cf19f2f5e6bac59ed3563055b813ff955cdb2b1ff653705b17a70",
+          "sha1": "3bf09867b3bc9cdd5b7fd6c811a0de24ce84bcd7",
+          "md5": "aaa804c5d6d319e58c72c57f535b4fc5"
+        }
+      ]
+    }
+  ]
+}
