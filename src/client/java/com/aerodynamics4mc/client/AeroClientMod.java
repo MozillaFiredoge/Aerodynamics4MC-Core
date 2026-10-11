@@ -19,6 +19,7 @@ import com.aerodynamics4mc.network.packet.AeroLocalWeatherPacket;
 import com.aerodynamics4mc.network.packet.AeroMesoscaleMapPacket;
 import com.aerodynamics4mc.network.packet.AeroRuntimeStatePacket;
 import com.aerodynamics4mc.runtime.AeroL2WindTunnel;
+import com.aerodynamics4mc.runtime.WorldWrap;
 import com.github.razorplay.packet_handler.network.IPacket;
 import lombok.Getter;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -104,7 +105,7 @@ public final class AeroClientMod implements AeroClientWindRuntimeProvider {
 	public static void onFlowField(AeroFlowPacket packet, /*? fabric{ */ /*ClientPlayNetworking.Context *//*?} neoforge{ */ IPayloadContext /*?} */ context) {
 		context./*? fabric{ */ /*client().execute *//*?} neoforge{ */ enqueueWork /*?} */
 		(() -> {
-			getInstance().getVisualizer().onFlowField(packet);
+			getInstance().getVisualizer().onFlowField(nearPlayer(packet));
 			getInstance().getIrisWindBridge().markDirty();
 		});
 	}
@@ -112,15 +113,16 @@ public final class AeroClientMod implements AeroClientWindRuntimeProvider {
 	public static void onCoarseWindField(AeroCoarseWindPacket packet, /*? fabric{ */ /*ClientPlayNetworking.Context *//*?} neoforge{ */ IPayloadContext /*?} */ context) {
 		context./*? fabric{ */ /*client().execute *//*?} neoforge{ */ enqueueWork /*?} */
 		(() -> {
-			getInstance().getVisualizer().onCoarseWindField(packet);
-			getInstance().getClientL2Solver().onCoarseWindField(packet);
+			AeroCoarseWindPacket local = nearPlayer(packet);
+			getInstance().getVisualizer().onCoarseWindField(local);
+			getInstance().getClientL2Solver().onCoarseWindField(local);
 			getInstance().getIrisWindBridge().markDirty();
 		});
 	}
 
 	public static void onFlowAnalysis(AeroFlowAnalysisPacket packet, /*? fabric{ */ /*ClientPlayNetworking.Context *//*?} neoforge{ */ IPayloadContext /*?} */ context) {
 		context./*? fabric{ */ /*client().execute *//*?} neoforge{ */ enqueueWork /*?} */
-		(() -> getInstance().getVisualizer().onFlowAnalysis(packet));
+		(() -> getInstance().getVisualizer().onFlowAnalysis(nearPlayer(packet)));
 	}
 
 	public static void onMesoscaleMap(AeroMesoscaleMapPacket packet, /*? fabric{ */ /*ClientPlayNetworking.Context *//*?} neoforge{ */ IPayloadContext /*?} */ context) {
@@ -136,7 +138,45 @@ public final class AeroClientMod implements AeroClientWindRuntimeProvider {
 
 	public static void onLocalWeather(AeroLocalWeatherPacket packet, /*? fabric{ */ /*ClientPlayNetworking.Context *//*?} neoforge{ */ IPayloadContext /*?} */ context) {
 		context./*? fabric{ */ /*client().execute *//*?} neoforge{ */ enqueueWork /*?} */
-		(() -> getInstance().getLocalWeatherData().update(packet));
+		(() -> getInstance().getLocalWeatherData().update(nearPlayer(packet)));
+	}
+
+	// The server keeps its weather grids continuous across the seam of a wrapping world, so a field can
+	// arrive a whole period away from the copy of the world the player is in. Move it next to the player.
+
+	private static AeroCoarseWindPacket nearPlayer(AeroCoarseWindPacket packet) {
+		int dx = wrapShiftToPlayerX(packet.getDimensionType(), packet.getOrigin().getX());
+		int dz = wrapShiftToPlayerZ(packet.getDimensionType(), packet.getOrigin().getZ());
+		return dx == 0 && dz == 0 ? packet : packet.offset(dx, dz);
+	}
+
+	private static AeroFlowPacket nearPlayer(AeroFlowPacket packet) {
+		int dx = wrapShiftToPlayerX(packet.getDimensionId(), packet.getOrigin().getX());
+		int dz = wrapShiftToPlayerZ(packet.getDimensionId(), packet.getOrigin().getZ());
+		return dx == 0 && dz == 0 ? packet : packet.offset(dx, dz);
+	}
+
+	private static AeroFlowAnalysisPacket nearPlayer(AeroFlowAnalysisPacket packet) {
+		int dx = wrapShiftToPlayerX(packet.getDimensionId(), packet.getOrigin().getX());
+		int dz = wrapShiftToPlayerZ(packet.getDimensionId(), packet.getOrigin().getZ());
+		return dx == 0 && dz == 0 ? packet : packet.offset(dx, dz);
+	}
+
+	private static AeroLocalWeatherPacket nearPlayer(AeroLocalWeatherPacket packet) {
+		int cellSize = packet.getCellSizeBlocks();
+		int dx = wrapShiftToPlayerX(packet.getDimensionType(), packet.getCenterCellX() * cellSize);
+		int dz = wrapShiftToPlayerZ(packet.getDimensionType(), packet.getCenterCellZ() * cellSize);
+		return dx == 0 && dz == 0 ? packet : packet.offsetCells(dx / cellSize, dz / cellSize);
+	}
+
+	private static int wrapShiftToPlayerX(Identifier dimensionId, int blockX) {
+		var player = net.minecraft.client.Minecraft.getInstance().player;
+		return player == null ? 0 : WorldWrap.shift(blockX, player.getBlockX(), WorldWrap.periodBlocks(dimensionId));
+	}
+
+	private static int wrapShiftToPlayerZ(Identifier dimensionId, int blockZ) {
+		var player = net.minecraft.client.Minecraft.getInstance().player;
+		return player == null ? 0 : WorldWrap.shift(blockZ, player.getBlockZ(), WorldWrap.periodBlocks(dimensionId));
 	}
 
 	private void openMeteorologicalMapScreen() {

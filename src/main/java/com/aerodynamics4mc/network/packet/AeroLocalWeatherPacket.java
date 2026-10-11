@@ -53,4 +53,10 @@ public class AeroLocalWeatherPacket implements IPacket {
 		serializer.writeLong(serverTick);
 		MinecraftSerializer.writeShortArray(serializer, packedWeather != null ? packedWeather : new short[0]);
 	}
+
+	/** The same grid moved horizontally by whole cells, as by whole periods of a wrapping world. */
+	public AeroLocalWeatherPacket offsetCells(int dx, int dz) {
+		return new AeroLocalWeatherPacket(dimensionType, gridWidth, cellSizeBlocks, originCellX + dx, originCellZ + dz,
+				centerCellX + dx, centerCellZ + dz, serverTick, packedWeather);
+	}
 }
