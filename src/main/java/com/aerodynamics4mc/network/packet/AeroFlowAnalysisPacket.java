@@ -56,4 +56,10 @@ public class AeroFlowAnalysisPacket implements IPacket {
 		serializer.writeByteArray(residualPressure);
 
 	}
+
+	/** The same field moved horizontally, as by whole periods of a wrapping world. */
+	public AeroFlowAnalysisPacket offset(int dx, int dz) {
+		return new AeroFlowAnalysisPacket(dimensionId, origin.offset(dx, 0, dz), baseSampleStride, fullResolution,
+				velocityTolerance, pressureTolerance, basePackedFlow, residualVx, residualVy, residualVz, residualPressure);
+	}
 }

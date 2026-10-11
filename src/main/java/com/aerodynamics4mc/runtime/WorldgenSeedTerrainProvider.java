@@ -25,6 +25,10 @@ final class WorldgenSeedTerrainProvider implements SeedTerrainProvider {
 
     @Override
     public TerrainSample sample(ServerLevel world, int blockX, int blockZ) {
+        // Grids that followed players across the seam of a wrapping world ask for columns a period away.
+        int period = WorldWrap.periodBlocks(world);
+        blockX = WorldWrap.nearest(blockX, 0, period);
+        blockZ = WorldWrap.nearest(blockZ, 0, period);
         // Keep integration errors outside the worldgen fallback catch.
         var id = world.dimension().identifier();
         AeroTerrainSample integration = AeroTerrainApi.sample(

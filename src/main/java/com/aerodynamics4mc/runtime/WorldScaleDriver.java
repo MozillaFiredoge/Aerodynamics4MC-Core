@@ -22,6 +22,7 @@ final class WorldScaleDriver {
     private static final float PLANETARY_WAVE_RADIANS_PER_SECOND = TAU / (24000.0f * 8.0f / 20.0f);
     private static final float DRIVER_SPATIAL_SCALE_X = 0.11f;
     private static final float DRIVER_SPATIAL_SCALE_Z = 0.09f;
+    private static final float DRIVER_EDDY_SCALE = 0.55f;
     private static final float MAX_DRIVER_WIND_MPS = 12.0f;
     private static final float SYNOPTIC_LULL_MIN_FACTOR = 0.18f;
     private static final float PLANETARY_WAVE_PRESSURE_PA = 420.0f;
@@ -84,6 +85,14 @@ final class WorldScaleDriver {
     private float mesoscaleLiftSupport;
     private float mesoscaleShearSupport;
     private int nextTornadoId;
+    // Fitted to the world's period by fitToWrapPeriod: world cells times domainScale are pressure-domain
+    // cells, and the planetary waves use these frequencies in radians per world cell.
+    private int wrapPeriodBlocks;
+    private float domainScale = 1.0f;
+    private float waveFrequencyX = DRIVER_SPATIAL_SCALE_X;
+    private float waveFrequencyZ = DRIVER_SPATIAL_SCALE_Z;
+    private float eddyFrequencyX = DRIVER_SPATIAL_SCALE_X * DRIVER_EDDY_SCALE;
+    private float eddyFrequencyZ = DRIVER_SPATIAL_SCALE_Z * DRIVER_EDDY_SCALE;
 
     private WorldScaleDriver(
         long worldSeed,
@@ -289,6 +298,7 @@ final class WorldScaleDriver {
             : Math.max(1L, tickCounter - lastTickUpdated) * dtSeconds;
         lastTickUpdated = tickCounter;
         driverTimeSeconds += elapsedSeconds;
+        fitToWrapPeriod(WorldWrap.periodBlocks(world));
 
         long worldTime = environmentSnapshot == null ? world.getDayTime() : environmentSnapshot.timeOfDay();
         seasonPhase = wrap01(worldTime / (float) SEASON_PERIOD_TICKS);
@@ -384,11 +394,11 @@ final class WorldScaleDriver {
     }
 
     synchronized Sample sample(int cellX, int cellZ) {
-        float sampleX = cellX * DRIVER_SPATIAL_SCALE_X;
-        float sampleZ = cellZ * DRIVER_SPATIAL_SCALE_Z;
-        float waveA = Mth.sin(sampleX + planetaryWavePhase * 0.70f);
-        float waveB = Mth.cos(sampleZ - planetaryWavePhase * 0.45f);
-        float eddy = Mth.sin((sampleX + sampleZ) * 0.55f + planetaryWavePhase * 0.25f);
+        float waveA = Mth.sin(cellX * waveFrequencyX + planetaryWavePhase * 0.70f);
+        float waveB = Mth.cos(cellZ * waveFrequencyZ - planetaryWavePhase * 0.45f);
+        float eddy = Mth.sin(cellX * eddyFrequencyX + cellZ * eddyFrequencyZ + planetaryWavePhase * 0.25f);
+        float domainX = cellX * domainScale;
+        float domainZ = cellZ * domainScale;
 
         float activeStormActivity = finiteClamp(stormActivity, 0.0f, 1.0f, 0.0f);
         float waveWindScale = Mth.lerp(synopticCalmFactor(worldSeed, planetaryWavePhase), 0.20f, 1.0f);
@@ -409,7 +419,7 @@ final class WorldScaleDriver {
         float tornadoUpdraftProxy = 0.0f;
 
         for (CycloneCell cell : cycloneCells) {
-            CycloneContribution contribution = cell.sample(cellX, cellZ, activeStormActivity);
+            CycloneContribution contribution = cell.sample(domainX, domainZ, activeStormActivity);
             targetWindX += contribution.windX();
             targetWindZ += contribution.windZ();
             pressureAnomalyPa += contribution.pressureAnomalyPa();
@@ -417,7 +427,7 @@ final class WorldScaleDriver {
             humidity += contribution.humidityBias();
         }
         for (ConvectiveCluster cluster : convectiveClusters) {
-            ConvectiveContribution contribution = cluster.sample(cellX, cellZ, activeStormActivity);
+            ConvectiveContribution contribution = cluster.sample(domainX, domainZ, activeStormActivity);
             pressureAnomalyPa += contribution.pressureAnomalyPa();
             temperatureBiasKelvin += contribution.temperatureBiasKelvin();
             humidity += contribution.humidityBias();
@@ -947,8 +957,8 @@ final class WorldScaleDriver {
         float jitterRadius = seededUnit(worldSeed, salt ^ 0x2545f4914f6cdd1dL) * jitterRadiusBlocks;
         float centerBlockX = clusterPos.getX() + Mth.cos(jitterAngle) * jitterRadius;
         float centerBlockZ = clusterPos.getZ() + Mth.sin(jitterAngle) * jitterRadius;
-        float clusterDriftXBlocksPerSecond = cluster.driftCellsPerSecondX * DRIVER_CELL_SIZE_BLOCKS;
-        float clusterDriftZBlocksPerSecond = cluster.driftCellsPerSecondZ * DRIVER_CELL_SIZE_BLOCKS;
+        float clusterDriftXBlocksPerSecond = cluster.driftCellsPerSecondX / domainScale * DRIVER_CELL_SIZE_BLOCKS;
+        float clusterDriftZBlocksPerSecond = cluster.driftCellsPerSecondZ / domainScale * DRIVER_CELL_SIZE_BLOCKS;
         float lifetimeSeconds = Mth.lerp(
             Mth.clamp((tornadoSupport - TORNADO_MIN_SUPPORT) / 0.7f, 0.0f, 1.0f),
             TORNADO_MIN_LIFETIME_SECONDS,
@@ -1019,8 +1029,8 @@ final class WorldScaleDriver {
         int focusCellZ = Math.floorDiv(mesoscaleFocus.getZ(), Math.round(DRIVER_CELL_SIZE_BLOCKS));
         float focusCenterBlockX = focusCellX * DRIVER_CELL_SIZE_BLOCKS + DRIVER_CELL_SIZE_BLOCKS * 0.5f;
         float focusCenterBlockZ = focusCellZ * DRIVER_CELL_SIZE_BLOCKS + DRIVER_CELL_SIZE_BLOCKS * 0.5f;
-        float dxCells = shortestWrappedDelta(cluster.centerCellX, focusCellX);
-        float dzCells = shortestWrappedDelta(cluster.centerCellZ, focusCellZ);
+        float dxCells = shortestWrappedDelta(cluster.centerCellX, focusCellX * domainScale) / domainScale;
+        float dzCells = shortestWrappedDelta(cluster.centerCellZ, focusCellZ * domainScale) / domainScale;
         int worldX = Mth.floor(focusCenterBlockX + dxCells * DRIVER_CELL_SIZE_BLOCKS);
         int worldZ = Mth.floor(focusCenterBlockZ + dzCells * DRIVER_CELL_SIZE_BLOCKS);
         return new BlockPos(worldX, baseY, worldZ);
@@ -1087,6 +1097,33 @@ final class WorldScaleDriver {
         float safeCurrent = finiteOrDefault(current, safeTarget);
         float alpha = Mth.clamp(deltaSeconds * ratePerSecond, 0.0f, 1.0f);
         return Mth.lerp(alpha, safeCurrent, safeTarget);
+    }
+
+    /**
+     * Makes the planetary weather repeat with a world that wraps every {@code periodBlocks} (0 if it does
+     * not), so it matches across the seam: the world is mapped onto a whole number of pressure domains, and
+     * each planetary wave takes the nearest frequency that fits the period.
+     */
+    private void fitToWrapPeriod(int periodBlocks) {
+        if (periodBlocks == wrapPeriodBlocks) {
+            return;
+        }
+        wrapPeriodBlocks = periodBlocks;
+        float periodCells = periodBlocks / DRIVER_CELL_SIZE_BLOCKS;
+        domainScale = periodBlocks <= 0
+            ? 1.0f
+            : Math.max(1, Math.round(periodCells / PRESSURE_DOMAIN_CELLS)) * PRESSURE_DOMAIN_CELLS / periodCells;
+        waveFrequencyX = fitFrequency(DRIVER_SPATIAL_SCALE_X, periodCells);
+        waveFrequencyZ = fitFrequency(DRIVER_SPATIAL_SCALE_Z, periodCells);
+        eddyFrequencyX = fitFrequency(DRIVER_SPATIAL_SCALE_X * DRIVER_EDDY_SCALE, periodCells);
+        eddyFrequencyZ = fitFrequency(DRIVER_SPATIAL_SCALE_Z * DRIVER_EDDY_SCALE, periodCells);
+    }
+
+    private static float fitFrequency(float radiansPerCell, float periodCells) {
+        if (periodCells <= 0.0f) {
+            return radiansPerCell;
+        }
+        return TAU * Math.max(1, Math.round(radiansPerCell * periodCells / TAU)) / periodCells;
     }
 
     private static float wrap01(float value) {

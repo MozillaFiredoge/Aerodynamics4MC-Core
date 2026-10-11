@@ -39,6 +39,27 @@ reported with provider/column context instead of silently changing the terrain a
 A callback failure can stop the atmosphere coordinator; repair the integration rather than
 relying on a fallback for claimed columns.
 
+## Wrapping worlds
+
+Mods that make a dimension repeat horizontally, so that walking off its east edge brings you
+back at its west edge, tell A4MC the period:
+
+```java
+AeroWorldWrapApi.setPeriod(A4mcId.of("minecraft", "overworld"), 1_048_576);
+```
+
+Columns `x` and `x + period` (likewise for `z`) are then the same place. The L0 and L1 grids
+follow players across the seam instead of being rebuilt on the far side, positions are matched
+to the grids' copy of the world, and the world-scale driver is fitted so that its pressure
+systems and planetary waves repeat with the period. Fields sent to clients are moved next to
+the client's player, so a wrapping mod may give clients coordinates whole periods away from the
+server's.
+
+The period must be a multiple of `AeroWorldWrapApi.PERIOD_GRANULARITY_BLOCKS` (256). Set it
+on each side it applies to: on the server when the dimension loads, on the client once the
+period is known. Set 0 to clear it. In singleplayer both sides share one setting. Dimensions
+without a period behave as before.
+
 ## Particle wind rules (0.2.2)
 
 The client creates `config/aerodynamics4mc-particles.json` on first initialization:

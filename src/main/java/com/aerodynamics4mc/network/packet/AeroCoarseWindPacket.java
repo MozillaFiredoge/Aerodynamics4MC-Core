@@ -49,4 +49,10 @@ public class AeroCoarseWindPacket implements IPacket {
 		MinecraftSerializer.writeShortArray(serializer, packedFlow != null ? packedFlow : new short[0]);
 		MinecraftSerializer.writeShortArray(serializer, packedAtmosphere != null ? packedAtmosphere : new short[0]);
 	}
+
+	/** The same field moved horizontally, as by whole periods of a wrapping world. */
+	public AeroCoarseWindPacket offset(int dx, int dz) {
+		return new AeroCoarseWindPacket(dimensionType, origin.offset(dx, 0, dz), cellSize, sizeX, sizeY, sizeZ,
+				serverTick, packedFlow, packedAtmosphere);
+	}
 }

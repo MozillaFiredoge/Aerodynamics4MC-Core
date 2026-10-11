@@ -61,4 +61,9 @@ public class AeroFlowPacket implements IPacket {
 		byte[] bytes = encodePackedFlow(packedFlow);
 		return new AeroFlowPacket(dimensionId, origin, sampleStride, packedFlow, bytes);
 	}
+
+	/** The same field moved horizontally, as by whole periods of a wrapping world. */
+	public AeroFlowPacket offset(int dx, int dz) {
+		return new AeroFlowPacket(dimensionId, origin.offset(dx, 0, dz), sampleStride, packedFlow, packedFlowBytes);
+	}
 }
