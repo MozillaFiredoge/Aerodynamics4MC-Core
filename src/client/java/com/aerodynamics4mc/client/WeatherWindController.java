@@ -10,7 +10,7 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 
 public final class WeatherWindController {
-    private static final float MAX_WEATHER_WIND_METERS_PER_SECOND = 18.0f;
+    private static final float MAX_WEATHER_WIND_METERS_PER_SECOND = com.aerodynamics4mc.api.AeroWindLimits.MAX_WIND_SPEED_MPS;
     private static final float WIND_SMOOTHING = 0.16f;
     private static final float RAIN_DRIFT_PER_MPS_PER_VERTICAL_BLOCK = 0.010f;
     private static final float SNOW_DRIFT_PER_MPS_PER_VERTICAL_BLOCK = 0.022f;

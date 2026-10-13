@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Run issue #19's grid concurrency contracts on an isolated NeoForge 1.21.1 server."""
+"""Run coarse-grid concurrency, weather layout and atmosphere contracts on an isolated NeoForge 1.21.1 server."""
 import argparse
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -18,10 +19,10 @@ if not args.skip_build:
 properties = (root / "stonecutter.properties.toml").read_text()
 version = re.search(r'^mod.version\s*=\s*"([^"]+)"', properties, re.M)[1]
 channel = re.search(r'^mod.channel_tag\s*=\s*"([^"]*)"', properties, re.M)[1]
-artifacts = list((variant / "build/libs").glob(f"aerodynamics4mc-{version}{channel}-neoforge+1.21.1*.jar"))
-artifacts = [p for p in artifacts if not p.name.endswith(("-sources.jar", "-javadoc.jar"))]
-if len(artifacts) != 1:
-    raise SystemExit(f"Expected one core jar, found {artifacts}")
+suffix = "" if os.environ.get("MOD_IS_RELEASE", "").lower() == "true" else "-SNAPSHOT"
+artifact = variant / f"build/libs/aerodynamics4mc-{version}{channel}-neoforge+1.21.1{suffix}.jar"
+if not artifact.is_file():
+    raise SystemExit(f"Core jar missing; build first: {artifact}")
 dev = variant / "build/moddev"
 classpath = (dev / "serverRunClasspath.txt").read_text().splitlines()[1]
 merged = next((dev / "artifacts").glob("neoforge-*-merged.jar"))
@@ -35,18 +36,22 @@ classes.mkdir()
 (server / "mods").mkdir(parents=True)
 compile_classpath = classpath + ":" + str(merged)
 subprocess.run(["javac", "-proc:none", "-cp", compile_classpath, "-d", str(classes),
-                str(root / "tools/tests/CoarseGridConcurrencyTest.java")], check=True)
+                str(root / "tools/tests/CoarseGridConcurrencyTest.java"),
+                str(root / "tools/tests/WeatherAtmosphereRuntimeTest.java"),
+                str(root / "tools/tests/WindSpeedRuntimeTest.java")], check=True)
 wrapper = work / "IssueTests.java"
 wrapper.write_text('''package a4mc.issuetests;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import com.aerodynamics4mc.runtime.CoarseGridConcurrencyTest;
+import com.aerodynamics4mc.runtime.WeatherAtmosphereRuntimeTest;
+import com.aerodynamics4mc.runtime.WindSpeedRuntimeTest;
 @Mod("a4mc_issue_tests")
 public class IssueTests {
  public IssueTests(){NeoForge.EVENT_BUS.addListener(this::started);}
  void started(ServerStartedEvent event){
-  try {CoarseGridConcurrencyTest.run(event.getServer().overworld());java.nio.file.Files.writeString(java.nio.file.Path.of("result.txt"),"PASS\\n");}
+  try {CoarseGridConcurrencyTest.run(event.getServer().overworld());WeatherAtmosphereRuntimeTest.run(event.getServer().overworld());WindSpeedRuntimeTest.run(event.getServer().overworld());java.nio.file.Files.writeString(java.nio.file.Path.of("result.txt"),"PASS\\n");}
   catch(Throwable e){e.printStackTrace();try{java.nio.file.Files.writeString(java.nio.file.Path.of("result.txt"),"FAIL: "+e);}catch(Exception ignored){}}
   event.getServer().halt(false);
  }
@@ -63,7 +68,7 @@ version="1.0"
 displayName="Coarse grid concurrency contracts"
 ''')
 # The contract class uses package access; put it into the temporary core copy to avoid module split packages.
-with zipfile.ZipFile(artifacts[0]) as source, zipfile.ZipFile(server / "mods/core.jar", "w", zipfile.ZIP_DEFLATED) as output:
+with zipfile.ZipFile(artifact) as source, zipfile.ZipFile(server / "mods/core.jar", "w", zipfile.ZIP_DEFLATED) as output:
     seen = set()
     for item in source.infolist():
         if item.filename not in seen:

@@ -23,8 +23,8 @@ public record GameplayWindSample(
     long worldDeltaEpoch,
     long l2Epoch
 ) {
-    private static final float MAX_MEAN_SPEED_MPS = 12.0f;
-    private static final float MAX_EFFECTIVE_SPEED_MPS = 15.0f;
+    private static final float MAX_MEAN_SPEED_MPS = AeroWindLimits.MAX_WIND_SPEED_MPS;
+    private static final float MAX_EFFECTIVE_SPEED_MPS = AeroWindLimits.MAX_WIND_SPEED_MPS;
     private static final float MAX_GUST_SPEED_MPS = 4.0f;
     private static final float MAX_L2_LOCAL_DELTA_MPS = 2.5f;
 

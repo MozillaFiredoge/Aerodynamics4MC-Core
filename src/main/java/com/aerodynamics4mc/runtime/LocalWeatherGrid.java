@@ -21,7 +21,7 @@ final class LocalWeatherGrid {
 		for (int localX = 0; localX < gridWidth; localX++) {
 			for (int localZ = 0; localZ < gridWidth; localZ++) {
 				int column = localX * gridWidth + localZ;
-				WeatherColumn columnWeather = computeColumn(snapshot, column, layers);
+				WeatherColumn columnWeather = computeColumn(snapshot, localX, localZ, layers);
 				int dstBase = column * AeroLocalWeatherPacket.CHANNEL_COUNT;
 				packed[dstBase + AeroLocalWeatherPacket.CH_CLOUD_WATER] = quantizeUnitToShort(columnWeather.cloudWater());
 				packed[dstBase + AeroLocalWeatherPacket.CH_PRECIPITATION] = quantizeUnitToShort(columnWeather.precipitation());
@@ -43,13 +43,13 @@ final class LocalWeatherGrid {
 		);
 	}
 
-	private static WeatherColumn computeColumn(MesoscaleGrid.Snapshot snapshot, int column, int layers) {
+	private static WeatherColumn computeColumn(MesoscaleGrid.Snapshot snapshot, int localX, int localZ, int layers) {
 		float cloudWater = 0.0f;
 		float precipitation = 0.0f;
 		float snowWeight = 0.0f;
 		float precipWeight = 0.0f;
 		for (int layer = 0; layer < layers; layer++) {
-			int state = column * snapshot.activeLayers() + layer;
+			int state = snapshot.index(localX, layer, localZ);
 			if (state < 0 || state >= snapshot.humidity().length || snapshot.terrainSolidMask()[state] > 0.5f) {
 				continue;
 			}

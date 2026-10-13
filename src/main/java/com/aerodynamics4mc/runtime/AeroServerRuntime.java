@@ -185,7 +185,9 @@ public final class AeroServerRuntime {
 	public static final float STATE_PRESSURE_MAX = 0.03f;
 	public static final float THERMAL_BASE_AMBIENT_AIR_TEMPERATURE_K = 288.15f;
 	public static final float THERMAL_BIOME_TEMPERATURE_SCALE_K = 12.0f;
-	public static final float THERMAL_ALTITUDE_LAPSE_RATE_K_PER_BLOCK = 0.0065f;
+	/** @deprecated Use AeroAtmosphereApi.altitudeLapseRate(dimensionId). */
+	@Deprecated
+	public static final float THERMAL_ALTITUDE_LAPSE_RATE_K_PER_BLOCK = com.aerodynamics4mc.api.AeroAtmosphereApi.DEFAULT_ALTITUDE_LAPSE_RATE_K_PER_BLOCK;
 	public static final float THERMAL_DEEP_GROUND_OFFSET_K = 1.5f;
 	public static final float THERMAL_SKY_TEMP_DROP_DAY_K = 10.0f;
 	public static final float THERMAL_SKY_TEMP_DROP_NIGHT_K = 24.0f;
@@ -220,8 +222,9 @@ public final class AeroServerRuntime {
 	public static final int MESOSCALE_MET_LAYER_HEIGHT_BLOCKS = 40;
 	public static final int MESOSCALE_MET_MAX_LAYERS = Math.max(1, 320 / MESOSCALE_MET_LAYER_HEIGHT_BLOCKS);
 	public static final int MESOSCALE_FORCING_REBUILD_TICKS = TICKS_PER_SECOND * 60;
-	public static final float MESOSCALE_STEP_SECONDS = MESOSCALE_MET_CELL_SIZE_BLOCKS * SOLVER_STEP_SECONDS;
-	public static final int MESOSCALE_REFRESH_TICKS = Math.max(1, Math.round(MESOSCALE_STEP_SECONDS / SOLVER_STEP_SECONDS));
+	public static final float MESOSCALE_STEP_SECONDS = com.aerodynamics4mc.api.AeroWindLimits.stableStepSeconds(MESOSCALE_MET_CELL_SIZE_BLOCKS, 0.5f);
+	// Keep terrain/driver refresh cadence independent of the finer native integration steps.
+	public static final int MESOSCALE_REFRESH_TICKS = MESOSCALE_MET_CELL_SIZE_BLOCKS;
 	public static final int L2_TO_L1_FEEDBACK_STEPS = MESOSCALE_REFRESH_TICKS;
 	public static final int NESTED_BOUNDARY_FACE_RESOLUTION = 6;
 	public static final float NESTED_BOUNDARY_MAX_VY_RATIO = 0.60f;
@@ -5849,7 +5852,7 @@ public final class AeroServerRuntime {
 			ambientAirTemperatureKelvin = backgroundSample.ambientAirTemperatureKelvin();
 			deepGroundTemperatureKelvin = backgroundSample.deepGroundTemperatureKelvin();
 		} else {
-			float altitudeOffsetK = (samplePos.getY() - seaLevel) * THERMAL_ALTITUDE_LAPSE_RATE_K_PER_BLOCK;
+			float altitudeOffsetK = (samplePos.getY() - seaLevel) * AtmosphereInputs.altitudeLapseRate(worldKey);
 			ambientAirTemperatureKelvin = THERMAL_BASE_AMBIENT_AIR_TEMPERATURE_K
 					+ (biomeTemperature - 0.8f) * THERMAL_BIOME_TEMPERATURE_SCALE_K
 					- altitudeOffsetK;
@@ -6182,6 +6185,10 @@ public final class AeroServerRuntime {
 	}
 
 	private AeroWindSample sampleCoarseWindLocked(ResourceKey<Level> worldKey, BlockPos probePos) {
+        return com.aerodynamics4mc.api.AeroWindLimits.limitWeatherSample(sampleCoarseWindUnchecked(worldKey,probePos));
+    }
+
+    private AeroWindSample sampleCoarseWindUnchecked(ResourceKey<Level> worldKey, BlockPos probePos) {
 		MesoscaleGrid.Sample mesoscaleSample = sampleMesoscaleMet(worldKey, probePos);
 		if (mesoscaleSample != null) {
 			float horizontalSpeed = windSpeed(mesoscaleSample.windX(), mesoscaleSample.windZ());
@@ -6698,7 +6705,7 @@ public final class AeroServerRuntime {
 		short[] packed = new short[gridWidth * gridWidth * AeroMesoscaleMapPacket.CHANNEL_COUNT];
 		for (int localX = 0; localX < gridWidth; localX++) {
 			for (int localZ = 0; localZ < gridWidth; localZ++) {
-				int stateIndex = mesoscaleSnapshotIndex(localX, layer, localZ, gridWidth, snapshot.activeLayers());
+				int stateIndex = snapshot.index(localX, layer, localZ);
 				int columnIndex = localX * gridWidth + localZ;
 				int dstBase = columnIndex * AeroMesoscaleMapPacket.CHANNEL_COUNT;
 				packed[dstBase + AeroMesoscaleMapPacket.CH_WIND_X] = quantizeSignedToShort(
@@ -6762,10 +6769,6 @@ public final class AeroServerRuntime {
 		return packed;
 	}
 
-	private int mesoscaleSnapshotIndex(int localX, int layer, int localZ, int gridWidth, int activeLayers) {
-		int columnIndex = localX * gridWidth + localZ;
-		return columnIndex * activeLayers + layer;
-	}
 
 	private short quantizeUnitToShort(float value) {
 		float unit = Mth.clamp(finiteOrDefault(value, 0.0f), 0.0f, 1.0f);
@@ -7189,9 +7192,9 @@ public final class AeroServerRuntime {
 						if (!sample.hasFlow()) {
 							return null;
 						}
-						packed[dstBase] = quantizeSignedToShort(sample.velocityX(), ATLAS_VELOCITY_QUANT_RANGE);
-						packed[dstBase + 1] = quantizeSignedToShort(sample.velocityY(), ATLAS_VELOCITY_QUANT_RANGE);
-						packed[dstBase + 2] = quantizeSignedToShort(sample.velocityZ(), ATLAS_VELOCITY_QUANT_RANGE);
+						packed[dstBase] = quantizeSignedToShort(sample.velocityX(), AeroCoarseWindPacket.VELOCITY_RANGE_MPS);
+						packed[dstBase + 1] = quantizeSignedToShort(sample.velocityY(), AeroCoarseWindPacket.VELOCITY_RANGE_MPS);
+						packed[dstBase + 2] = quantizeSignedToShort(sample.velocityZ(), AeroCoarseWindPacket.VELOCITY_RANGE_MPS);
 						packed[dstBase + 3] = quantizeSignedToShort(sample.pressure(), ATLAS_PRESSURE_QUANT_RANGE);
 						packedAtmosphere[atmosphereBase] = quantizeSignedToShort(
 								finiteOrDefault(sample.temperatureKelvin(), 288.15f) - 288.15f,
@@ -7202,9 +7205,9 @@ public final class AeroServerRuntime {
 								1.0f
 						);
 						packedAtmosphere[atmosphereBase + 2] = quantizeSignedToShort(sample.turbulenceIntensity(), COARSE_TURBULENCE_RANGE_MPS);
-						packedAtmosphere[atmosphereBase + 3] = quantizeSignedToShort(sample.gustX(), ATLAS_VELOCITY_QUANT_RANGE);
-						packedAtmosphere[atmosphereBase + 4] = quantizeSignedToShort(sample.gustY(), ATLAS_VELOCITY_QUANT_RANGE);
-						packedAtmosphere[atmosphereBase + 5] = quantizeSignedToShort(sample.gustZ(), ATLAS_VELOCITY_QUANT_RANGE);
+						packedAtmosphere[atmosphereBase + 3] = quantizeSignedToShort(sample.gustX(), AeroCoarseWindPacket.VELOCITY_RANGE_MPS);
+						packedAtmosphere[atmosphereBase + 4] = quantizeSignedToShort(sample.gustY(), AeroCoarseWindPacket.VELOCITY_RANGE_MPS);
+						packedAtmosphere[atmosphereBase + 5] = quantizeSignedToShort(sample.gustZ(), AeroCoarseWindPacket.VELOCITY_RANGE_MPS);
 						packedAtmosphere[atmosphereBase + 6] = quantizeSignedToShort(sample.windShearXPerBlock(), COARSE_SHEAR_RANGE_PER_BLOCK);
 						packedAtmosphere[atmosphereBase + 7] = quantizeSignedToShort(sample.windShearZPerBlock(), COARSE_SHEAR_RANGE_PER_BLOCK);
 						packedAtmosphere[atmosphereBase + 8] = quantizeSignedToShort(sample.ablStability(), 1.0f);

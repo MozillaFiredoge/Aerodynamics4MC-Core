@@ -1,6 +1,8 @@
 package com.aerodynamics4mc.runtime;
 
 import com.aerodynamics4mc.api.AeroTerrainApi;
+import com.aerodynamics4mc.api.AeroAtmosphereApi;
+import com.aerodynamics4mc.api.AeroWindLimits;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
@@ -14,7 +16,6 @@ import java.util.Map;
 final class BackgroundMetGrid {
     private static final float BASE_AIR_TEMPERATURE_K = 288.15f;
     private static final float BIOME_TEMPERATURE_SCALE_K = 12.0f;
-    private static final float ALTITUDE_LAPSE_RATE_K_PER_BLOCK = 0.0065f;
     private static final float DEEP_GROUND_OFFSET_K = 1.5f;
     private static final float FLOW_RELAXATION_PER_SECOND = 1.0f / 90.0f;
     private static final float PRESSURE_RELAXATION_PER_SECOND = 1.0f / 180.0f;
@@ -28,8 +29,8 @@ final class BackgroundMetGrid {
     private static final float HUMIDITY_DIFFUSION_BLEND = 0.08f;
     private static final float SOLAR_SURFACE_HEATING_K = 18.0f;
     private static final float CLEAR_SKY_COOLING_K = 8.0f;
-    private static final float MAX_DRIVER_WIND_MPS = 14.0f;
-    private static final float MAX_DYNAMIC_WIND_MPS = 18.0f;
+    private static final float MAX_DRIVER_WIND_MPS = AeroWindLimits.MAX_WIND_SPEED_MPS;
+    private static final float MAX_DYNAMIC_WIND_MPS = AeroWindLimits.MAX_WIND_SPEED_MPS;
     private static final float MAX_PRESSURE_ANOMALY_PA = 2400.0f;
     private static final float GEOSTROPHIC_WIND_SCALE_M2_PER_PA_S = 12.0f;
     private static final float GEOSTROPHIC_DIRECT_WIND_BLEND = 0.18f;
@@ -59,6 +60,9 @@ final class BackgroundMetGrid {
     private long lastRefreshTick = Long.MIN_VALUE;
     private long currentRefreshTick = Long.MIN_VALUE;
     private long terrainRevision = Long.MIN_VALUE;
+    private long atmosphereRevision = Long.MIN_VALUE;
+    private boolean backgroundWindDragEnabled = true;
+    private float altitudeLapseRate = AeroAtmosphereApi.DEFAULT_ALTITUDE_LAPSE_RATE_K_PER_BLOCK;
     private float currentDeltaSeconds = 1.0f;
     private float currentSolarAltitude = 0.0f;
     private float currentClearSky = 1.0f;
@@ -83,6 +87,11 @@ final class BackgroundMetGrid {
         currentWorld = world;
         currentProvider = provider;
         currentDriver = driver;
+        long nextAtmosphereRevision = AeroAtmosphereApi.atmosphereRevision();
+        boolean atmosphereChanged = atmosphereRevision != nextAtmosphereRevision;
+        atmosphereRevision = nextAtmosphereRevision;
+        altitudeLapseRate = AtmosphereInputs.altitudeLapseRate(world.dimension());
+        backgroundWindDragEnabled = AtmosphereInputs.backgroundWindDragEnabled(world.dimension());
         long nextTerrainRevision = AeroTerrainApi.terrainRevision();
         boolean terrainChanged = terrainRevision != nextTerrainRevision;
         terrainRevision = nextTerrainRevision;
@@ -92,7 +101,7 @@ final class BackgroundMetGrid {
         boolean centerChanged = nextCenterCellX != centerCellX || nextCenterCellZ != centerCellZ;
         centerCellX = nextCenterCellX;
         centerCellZ = nextCenterCellZ;
-        boolean updateDue = lastRefreshTick == Long.MIN_VALUE || tickCounter - lastRefreshTick >= updateIntervalTicks;
+        boolean updateDue = atmosphereChanged || lastRefreshTick == Long.MIN_VALUE || tickCounter - lastRefreshTick >= updateIntervalTicks;
         if (updateDue) {
             currentDeltaSeconds = lastRefreshTick == Long.MIN_VALUE
                     ? dtSeconds
@@ -503,11 +512,11 @@ final class BackgroundMetGrid {
                 StateSample advected = sampleState(previous, backtraceX, backtraceZ);
                 StateSample neighborMean = sampleNeighborMean(previous, cx, cz);
 
-                float roughnessDrag = Mth.clamp(
+                float roughnessDrag = backgroundWindDragEnabled ? Mth.clamp(
                         currentDeltaSeconds * (BASE_ROUGHNESS_DRAG_PER_SECOND + cell.roughnessLengthMeters * ROUGHNESS_DRAG_SCALE_PER_SECOND),
                         0.0f,
                         MAX_ROUGHNESS_DRAG
-                );
+                ) : 0.0f;
                 float nextWindX = mix(advected.windX, neighborMean.windX, FLOW_DIFFUSION_BLEND);
                 float nextWindZ = mix(advected.windZ, neighborMean.windZ, FLOW_DIFFUSION_BLEND);
                 float nextPressure = mix(advected.pressureAnomalyPa, neighborMean.pressureAnomalyPa, PRESSURE_DIFFUSION_BLEND);
@@ -520,8 +529,8 @@ final class BackgroundMetGrid {
                 nextPressure = Mth.clamp(nextPressure, -MAX_PRESSURE_ANOMALY_PA, MAX_PRESSURE_ANOMALY_PA);
                 PressureWind pressureWind = geostrophicWindFromPressure(previous, cx, cz);
                 float directWindBlend = directWindBlendForPressureWind(pressureWind);
-                float targetWindX = Mth.lerp(directWindBlend, pressureWind.windX(), target.targetWindX);
-                float targetWindZ = Mth.lerp(directWindBlend, pressureWind.windZ(), target.targetWindZ);
+                float targetWindX = target.externalWind ? target.targetWindX : Mth.lerp(directWindBlend, pressureWind.windX(), target.targetWindX);
+                float targetWindZ = target.externalWind ? target.targetWindZ : Mth.lerp(directWindBlend, pressureWind.windZ(), target.targetWindZ);
                 WindVector terrainAdjustedWind = applyTerrainFormDrag(cx, cz, targetWindX, targetWindZ);
                 nextWindX = relax(nextWindX, terrainAdjustedWind.windX(), currentDeltaSeconds, FLOW_RELAXATION_PER_SECOND);
                 nextWindZ = relax(nextWindZ, terrainAdjustedWind.windZ(), currentDeltaSeconds, FLOW_RELAXATION_PER_SECOND);
@@ -529,6 +538,9 @@ final class BackgroundMetGrid {
                 nextWindZ *= (1.0f - roughnessDrag);
                 nextWindX = Mth.clamp(nextWindX, -MAX_DYNAMIC_WIND_MPS, MAX_DYNAMIC_WIND_MPS);
                 nextWindZ = Mth.clamp(nextWindZ, -MAX_DYNAMIC_WIND_MPS, MAX_DYNAMIC_WIND_MPS);
+                float windScale = AeroWindLimits.scale(nextWindX,0,nextWindZ);
+                nextWindX *= windScale;
+                nextWindZ *= windScale;
 
                 float nextAmbient = mix(advected.ambientAirTemperatureKelvin, neighborMean.ambientAirTemperatureKelvin, THERMAL_DIFFUSION_BLEND);
                 nextAmbient = relax(nextAmbient, target.targetAmbientAirTemperatureKelvin, currentDeltaSeconds, AIR_TEMPERATURE_RELAXATION_PER_SECOND);
@@ -562,8 +574,8 @@ final class BackgroundMetGrid {
                 cell.pressureAnomalyPa = finiteClamp(nextPressure, -MAX_PRESSURE_ANOMALY_PA, MAX_PRESSURE_ANOMALY_PA, target.targetPressureAnomalyPa);
                 cell.pressureGradientXPaPerMeter = pressureWind.pressureGradientXPaPerMeter();
                 cell.pressureGradientZPaPerMeter = pressureWind.pressureGradientZPaPerMeter();
-                cell.geostrophicWindX = pressureWind.windX();
-                cell.geostrophicWindZ = pressureWind.windZ();
+                cell.geostrophicWindX = target.externalWind ? target.targetWindX : pressureWind.windX();
+                cell.geostrophicWindZ = target.externalWind ? target.targetWindZ : pressureWind.windZ();
                 cell.backgroundWindX = finiteClamp(nextWindX, -MAX_DYNAMIC_WIND_MPS, MAX_DYNAMIC_WIND_MPS, target.targetWindX);
                 cell.backgroundWindZ = finiteClamp(nextWindZ, -MAX_DYNAMIC_WIND_MPS, MAX_DYNAMIC_WIND_MPS, target.targetWindZ);
                 cell.humidity = finiteClamp(nextHumidity, 0.0f, 1.0f, target.targetHumidity);
@@ -599,6 +611,8 @@ final class BackgroundMetGrid {
             cell.pressureAnomalyPa = target.targetPressureAnomalyPa;
         }
         WindVector seededWind = applyTerrainFormDrag(cellX, cellZ, target.targetWindX, target.targetWindZ);
+        float seededScale = AeroWindLimits.scale(seededWind.windX(), 0, seededWind.windZ());
+        seededWind = new WindVector(seededWind.windX() * seededScale, seededWind.windZ() * seededScale);
         if (!Float.isFinite(cell.backgroundWindX)) {
             cell.backgroundWindX = seededWind.windX();
         }
@@ -694,7 +708,7 @@ final class BackgroundMetGrid {
     private WorldScaleTarget targetState(CellState cell, int cellX, int cellZ) {
         float baseAmbient = BASE_AIR_TEMPERATURE_K
                 + (cell.biomeTemperature - 0.8f) * BIOME_TEMPERATURE_SCALE_K
-                - Math.max(0.0f, cell.terrainHeightBlocks - currentWorld.getSeaLevel()) * ALTITUDE_LAPSE_RATE_K_PER_BLOCK;
+                - Math.max(0.0f, cell.terrainHeightBlocks - currentWorld.getSeaLevel()) * altitudeLapseRate;
         WorldScaleDriver.Sample driverSample = currentDriver == null ? null : currentDriver.sample(cellX, cellZ);
         float fallbackWindX = prevailingWindComponent(currentWorld.getSeed(), cellX, cellZ, 0x517cc1b727220a95L);
         float fallbackWindZ = prevailingWindComponent(currentWorld.getSeed(), cellX, cellZ, 0x9e3779b97f4a7c15L);
@@ -710,6 +724,14 @@ final class BackgroundMetGrid {
                 MAX_DRIVER_WIND_MPS,
                 fallbackWindZ
         );
+        var externalWind = AtmosphereInputs.backgroundWind(currentWorld, cellCenterBlock(cellX), cellCenterBlock(cellZ));
+        if (externalWind.available()) {
+            targetWindX = externalWind.windX();
+            targetWindZ = externalWind.windZ();
+        }
+        float windScale = AeroWindLimits.scale(targetWindX,0,targetWindZ);
+        targetWindX *= windScale;
+        targetWindZ *= windScale;
         float targetPressureAnomalyPa = finiteClamp(
                 driverSample != null ? driverSample.pressureAnomalyPa() : 0.0f,
                 -MAX_PRESSURE_ANOMALY_PA,
@@ -740,13 +762,14 @@ final class BackgroundMetGrid {
                 finiteOrDefault(driverSample == null ? 0.0f : driverSample.tornadoWindZ(), 0.0f),
                 finiteOrDefault(driverSample == null ? 0.0f : driverSample.tornadoHeatingKelvin(), 0.0f),
                 finiteOrDefault(driverSample == null ? 0.0f : driverSample.tornadoMoistening(), 0.0f),
-                Math.max(0.0f, finiteOrDefault(driverSample == null ? 0.0f : driverSample.tornadoUpdraftProxy(), 0.0f))
+                Math.max(0.0f, finiteOrDefault(driverSample == null ? 0.0f : driverSample.tornadoUpdraftProxy(), 0.0f)),
+                externalWind.available()
         );
     }
 
     private WindVector applyTerrainFormDrag(int cellX, int cellZ, float windX, float windZ) {
         float speedSquared = windX * windX + windZ * windZ;
-        if (speedSquared <= 1.0e-5f || currentProvider == null || currentWorld == null) {
+        if (!backgroundWindDragEnabled || speedSquared <= 1.0e-5f || currentProvider == null || currentWorld == null) {
             return new WindVector(windX, windZ);
         }
 
@@ -822,16 +845,20 @@ final class BackgroundMetGrid {
         StateSample south = sampleState(previous, cellX, cellZ + 1.0f);
         float gradientX = (east.pressureAnomalyPa - west.pressureAnomalyPa) / Math.max(1.0f, cellSizeBlocks * 2.0f);
         float gradientZ = (south.pressureAnomalyPa - north.pressureAnomalyPa) / Math.max(1.0f, cellSizeBlocks * 2.0f);
-        float coriolis = pseudoCoriolisFactor(cellZ);
-        float coriolisSign = coriolis >= 0.0f ? 1.0f : -1.0f;
+        var coriolisSample = AtmosphereInputs.coriolis(currentWorld, cellCenterBlock(cellX), cellCenterBlock(cellZ), cellSizeBlocks);
+        float coriolis = coriolisSample.factor();
+        float coriolisSign = coriolisSample.turningSign();
         float coriolisStrength = Math.max(MIN_CORIOLIS_FACTOR, Math.abs(coriolis));
         float windX = -gradientZ * GEOSTROPHIC_WIND_SCALE_M2_PER_PA_S * coriolisSign / coriolisStrength;
         float windZ = gradientX * GEOSTROPHIC_WIND_SCALE_M2_PER_PA_S * coriolisSign / coriolisStrength;
+        windX = finiteClamp(windX, -MAX_DRIVER_WIND_MPS, MAX_DRIVER_WIND_MPS, 0.0f);
+        windZ = finiteClamp(windZ, -MAX_DRIVER_WIND_MPS, MAX_DRIVER_WIND_MPS, 0.0f);
+        float windScale = AeroWindLimits.scale(windX, 0.0f, windZ);
         return new PressureWind(
                 gradientX,
                 gradientZ,
-                finiteClamp(windX, -MAX_DRIVER_WIND_MPS, MAX_DRIVER_WIND_MPS, 0.0f),
-                finiteClamp(windZ, -MAX_DRIVER_WIND_MPS, MAX_DRIVER_WIND_MPS, 0.0f)
+                windX * windScale,
+                windZ * windScale
         );
     }
 
@@ -849,15 +876,6 @@ final class BackgroundMetGrid {
             return 0.0f;
         }
         return Mth.sqrt(windX * windX + windZ * windZ);
-    }
-
-    private float pseudoCoriolisFactor(int cellZ) {
-        float periodCells = 384.0f;
-        float wrapped = cellZ % periodCells;
-        if (wrapped < 0.0f) {
-            wrapped += periodCells;
-        }
-        return Mth.clamp((wrapped - periodCells * 0.5f) / (periodCells * 0.5f), -1.0f, 1.0f);
     }
 
     private float relax(float current, float target, float deltaSeconds) {
@@ -1169,7 +1187,8 @@ final class BackgroundMetGrid {
             float tornadoWindZ,
             float tornadoHeatingKelvin,
             float tornadoMoistening,
-            float tornadoUpdraftProxy
+            float tornadoUpdraftProxy,
+            boolean externalWind
     ) {
     }
 

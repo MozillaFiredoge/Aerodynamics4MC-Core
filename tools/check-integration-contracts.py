@@ -7,10 +7,17 @@ import tempfile
 root = Path(__file__).resolve().parents[1]
 sources = list((root / "api/src/main/java").rglob("*.java"))
 sources += [root / "tools/tests/AeroTerrainApiContractTest.java"]
+sources += [root / "tools/tests/AeroAtmosphereApiContractTest.java",
+            root / "tools/tests/WindLimitsContractTest.java",
+            root / "src/main/java/com/aerodynamics4mc/runtime/CoarseGridLayout.java",
+            root / "tools/tests/CoarseGridLayoutContractTest.java"]
 sources += [root / "src/client/java/com/aerodynamics4mc/client/ParticleWindRules.java",
             root / "tools/tests/ParticleWindRulesContractTest.java"]
 with tempfile.TemporaryDirectory(prefix="a4mc-contracts-") as output:
     subprocess.run(["javac", "--release", "17", "-d", output, *map(str, sources)], check=True)
     for test in ["com.aerodynamics4mc.api.AeroTerrainApiContractTest",
+                 "com.aerodynamics4mc.api.AeroAtmosphereApiContractTest",
+                 "com.aerodynamics4mc.api.WindLimitsContractTest",
+                 "com.aerodynamics4mc.runtime.CoarseGridLayoutContractTest",
                  "com.aerodynamics4mc.client.ParticleWindRulesContractTest"]:
         subprocess.run(["java", "-cp", output, test], check=True)

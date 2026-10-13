@@ -23,7 +23,7 @@ final class WorldScaleDriver {
     private static final float DRIVER_SPATIAL_SCALE_X = 0.11f;
     private static final float DRIVER_SPATIAL_SCALE_Z = 0.09f;
     private static final float DRIVER_EDDY_SCALE = 0.55f;
-    private static final float MAX_DRIVER_WIND_MPS = 12.0f;
+    private static final float MAX_DRIVER_WIND_MPS = com.aerodynamics4mc.api.AeroWindLimits.MAX_WIND_SPEED_MPS;
     private static final float SYNOPTIC_LULL_MIN_FACTOR = 0.18f;
     private static final float PLANETARY_WAVE_PRESSURE_PA = 420.0f;
 
@@ -449,6 +449,9 @@ final class WorldScaleDriver {
 
         targetWindX = finiteClamp(targetWindX, -MAX_DRIVER_WIND_MPS, MAX_DRIVER_WIND_MPS, 0.0f);
         targetWindZ = finiteClamp(targetWindZ, -MAX_DRIVER_WIND_MPS, MAX_DRIVER_WIND_MPS, 0.0f);
+        float windScale = com.aerodynamics4mc.api.AeroWindLimits.scale(targetWindX,0,targetWindZ);
+        targetWindX *= windScale;
+        targetWindZ *= windScale;
         pressureAnomalyPa = finiteClamp(pressureAnomalyPa, -2200.0f, 2200.0f, 0.0f);
         humidity = finiteClamp(humidity, 0.0f, 1.0f, 0.50f);
         return new Sample(

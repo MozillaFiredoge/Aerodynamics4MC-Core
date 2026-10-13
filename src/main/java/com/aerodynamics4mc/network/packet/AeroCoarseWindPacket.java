@@ -14,6 +14,7 @@ import net.minecraft.resources.Identifier;
 @NoArgsConstructor
 @AllArgsConstructor
 public class AeroCoarseWindPacket implements IPacket {
+	public static final float VELOCITY_RANGE_MPS = com.aerodynamics4mc.api.AeroWindLimits.MAX_WIND_SPEED_MPS;
 	private Identifier dimensionType;
 	private BlockPos origin;
 	private int cellSize;

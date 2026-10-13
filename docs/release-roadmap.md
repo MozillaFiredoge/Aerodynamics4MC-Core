@@ -4,7 +4,33 @@ This document is the release-facing roadmap for Aerodynamics4MC. It defines what
 
 Target first public stable release: **v0.1 on 2026-05-04**.
 
-## Pending: #19 teleport stalls
+## Pending: weather indexing and atmosphere integrations
+
+- #21: L1 weather packets and meteorological maps use the snapshot's X/layer/Z index function,
+  matching snapshot writes and diagnostics. Multi-layer data no longer mixes Z and layer indices.
+- #22: `AeroAtmosphereApi.registerCoriolisProvider` supplies one world-coordinate Coriolis model
+  to L0 and L1. Unclaimed dimensions/columns retain their legacy behavior.
+- #24: Per-dimension altitude lapse settings are shared by L0, L1, instability thresholds and
+  thermal fallback sampling. The default remains `0.0065 K/block`.
+- #23: Raise L0/L1, coarse packet/map and gameplay wind limits to a 40 m/s vector magnitude.
+  Use finer L1 integration steps without raising the native lattice bound or terrain-refresh rate.
+  Update the rain/snow wind input range, preserving its bounded vertex drift.
+  Add an external background-wind provider and per-dimension control over additional L0
+  terrain/roughness drag; drag remains enabled by default. Strong client weather uses coarse
+  wind rather than the experimental L2 atlas's narrower range.
+
+Minecraft-free checks: `python3 tools/check-integration-contracts.py`.
+The isolated server suite `python3 tools/check-coarse-grid-runtime.py` also exercises actual
+rain/cloud/snow packets, all eight map layers, lapse rates at all four sampling paths, hemisphere
+turning, a zero Coriolis factor and forcing invalidation. It also tests external strong wind,
+drag switching, diagonal speed limits, native solver stability and coarse packet encoding.
+It retains #19's concurrency regressions.
+Integrations such as PhysGeo must opt in through the new API; that mod combination is not tested here.
+Client packet decoding and strong-weather/L2 source selection can be checked with
+`python3 tools/check-wind40-client.py` after building the NeoForge 1.21.1 client classes and
+generating `:1.21.1-neoforge:createClientLaunchScript`.
+
+## v0.2.3: #19 teleport stalls
 
 L0 sampling now reads only published terrain/weather data. Missing columns no longer acquire
 the refresh lock or create cells on the server thread. L1 weather/map snapshots are built and

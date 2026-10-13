@@ -32,8 +32,8 @@ public class AeroMesoscaleMapPacket implements IPacket {
 	public static final int CH_TERRAIN_SOLID = 15;
 	public static final int CH_SURFACE_CLASS = 16;
 
-	public static final float HORIZONTAL_WIND_RANGE_MPS = 24.0f;
-	public static final float VERTICAL_WIND_RANGE_MPS = 8.0f;
+	public static final float HORIZONTAL_WIND_RANGE_MPS = com.aerodynamics4mc.api.AeroWindLimits.MAX_WIND_SPEED_MPS;
+	public static final float VERTICAL_WIND_RANGE_MPS = com.aerodynamics4mc.api.AeroWindLimits.MAX_WIND_SPEED_MPS;
 	public static final float DIAGNOSTIC_RANGE = 8.0f;
 	public static final float SHEAR_RANGE = 8.0f;
 	public static final float ABL_HEIGHT_RANGE_BLOCKS = 480.0f;
